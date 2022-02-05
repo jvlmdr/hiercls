@@ -1,0 +1,1189 @@
+Life,Fungi
+Fungi,Basidiomycota
+Basidiomycota,Agaricomycetes
+Agaricomycetes,Agaricales
+Agaricales,Amanitaceae
+Amanitaceae,Amanita
+Amanita,Amanita vaginata
+Amanita,Amanita flavoconia
+Amanita,Amanita calyptroderma
+Amanita,Amanita jacksonii
+Amanita,Amanita phalloides
+Amanita,Amanita muscaria
+Amanita,Amanita bisporigera
+Amanita,Amanita gemmata
+Amanita,Amanita pantherina
+Amanita,Amanita velosa
+Amanita,Amanita augusta
+Amanita,Amanita rubescens
+Life,Animalia
+Animalia,Arthropoda
+Arthropoda,Insecta
+Insecta,Coleoptera
+Coleoptera,Carabidae
+Carabidae,Cicindela
+Cicindela,Cicindela aurulenta
+Cicindela,Cicindela punctulata
+Cicindela,Cicindela ocellata
+Cicindela,Cicindela campestris
+Cicindela,Cicindela oregona
+Cicindela,Cicindela tranquebarica
+Cicindela,Cicindela formosa
+Cicindela,Cicindela scutellaris
+Cicindela,Cicindela duodecimguttata
+Cicindela,Cicindela sexguttata
+Cicindela,Cicindela repanda
+Insecta,Odonata
+Odonata,Coenagrionidae
+Coenagrionidae,Argia
+Argia,Argia sedula
+Argia,Argia tibialis
+Argia,Argia plana
+Argia,Argia translata
+Argia,Argia moesta
+Argia,Argia nahuana
+Argia,Argia vivida
+Argia,Argia immunda
+Argia,Argia apicalis
+Argia,Argia fumipennis
+Coenagrionidae,Enallagma
+Enallagma,Enallagma geminatum
+Enallagma,Enallagma carunculatum
+Enallagma,Enallagma civile
+Enallagma,Enallagma aspersum
+Enallagma,Enallagma basidens
+Enallagma,Enallagma exsulans
+Enallagma,Enallagma signatum
+Enallagma,Enallagma traviatum
+Enallagma,Enallagma vesperum
+Enallagma,Enallagma cyathigerum
+Odonata,Libellulidae
+Libellulidae,Libellula
+Libellula,Libellula quadrimaculata
+Libellula,Libellula depressa
+Libellula,Libellula luctuosa
+Libellula,Libellula needhami
+Libellula,Libellula cyanea
+Libellula,Libellula croceipennis
+Libellula,Libellula auripennis
+Libellula,Libellula comanche
+Libellula,Libellula saturata
+Libellula,Libellula semifasciata
+Libellula,Libellula vibrans
+Libellula,Libellula incesta
+Libellula,Libellula fulva
+Libellula,Libellula forensis
+Libellula,Libellula pulchella
+Libellulidae,Orthetrum
+Orthetrum,Orthetrum cancellatum
+Orthetrum,Orthetrum caledonicum
+Orthetrum,Orthetrum triangulare
+Orthetrum,Orthetrum chrysis
+Orthetrum,Orthetrum coerulescens
+Orthetrum,Orthetrum glaucum
+Orthetrum,Orthetrum sabina
+Orthetrum,Orthetrum pruinosum
+Orthetrum,Orthetrum albistylum
+Orthetrum,Orthetrum brunneum
+Libellulidae,Sympetrum
+Sympetrum,Sympetrum vicinum
+Sympetrum,Sympetrum corruptum
+Sympetrum,Sympetrum fonscolombii
+Sympetrum,Sympetrum costiferum
+Sympetrum,Sympetrum danae
+Sympetrum,Sympetrum pallipes
+Sympetrum,Sympetrum semicinctum
+Sympetrum,Sympetrum ambiguum
+Sympetrum,Sympetrum sanguineum
+Sympetrum,Sympetrum obtrusum
+Sympetrum,Sympetrum illotum
+Sympetrum,Sympetrum striolatum
+Insecta,Lepidoptera
+Lepidoptera,Nymphalidae
+Nymphalidae,Junonia
+Junonia,Junonia orithya
+Junonia,Junonia coenia
+Junonia,Junonia oenone
+Junonia,Junonia atlites
+Junonia,Junonia hierta
+Junonia,Junonia evarete
+Junonia,Junonia almana
+Junonia,Junonia genoveva
+Junonia,Junonia iphita
+Junonia,Junonia hedonia
+Junonia,Junonia lemonias
+Lepidoptera,Papilionidae
+Papilionidae,Papilio
+Papilio,Papilio rutulus
+Papilio,Papilio glaucus
+Papilio,Papilio multicaudata
+Papilio,Papilio garamas
+Papilio,Papilio troilus
+Papilio,Papilio eurymedon
+Papilio,Papilio palamedes
+Papilio,Papilio canadensis
+Papilio,Papilio demoleus
+Papilio,Papilio machaon
+Papilio,Papilio polyxenes
+Papilio,Papilio demodocus
+Papilio,Papilio zelicaon
+Papilio,Papilio cresphontes
+Papilio,Papilio anchisiades
+Papilio,Papilio thoas
+Papilio,Papilio rumiko
+Papilio,Papilio xuthus
+Papilio,Papilio polytes
+Papilio,Papilio helenus
+Papilio,Papilio protenor
+Papilio,Papilio memnon
+Papilio,Papilio paris
+Insecta,Hymenoptera
+Hymenoptera,Apidae
+Apidae,Bombus
+Bombus,Bombus terrestris
+Bombus,Bombus terricola
+Bombus,Bombus pensylvanicus
+Bombus,Bombus californicus
+Bombus,Bombus pascuorum
+Bombus,Bombus fervidus
+Bombus,Bombus sonorus
+Bombus,Bombus vosnesenskii
+Bombus,Bombus mixtus
+Bombus,Bombus impatiens
+Bombus,Bombus ternarius
+Bombus,Bombus huntii
+Bombus,Bombus perplexus
+Bombus,Bombus bimaculatus
+Bombus,Bombus bifarius
+Bombus,Bombus vagans
+Bombus,Bombus hypnorum
+Bombus,Bombus melanopygus
+Bombus,Bombus lapidarius
+Bombus,Bombus auricomus
+Bombus,Bombus nevadensis
+Bombus,Bombus griseocollis
+Bombus,Bombus rufocinctus
+Bombus,Bombus citrinus
+Bombus,Bombus borealis
+Hymenoptera,Vespidae
+Vespidae,Polistes
+Polistes,Polistes carnifex
+Polistes,Polistes exclamans
+Polistes,Polistes instabilis
+Polistes,Polistes annularis
+Polistes,Polistes chinensis
+Polistes,Polistes dominula
+Polistes,Polistes major
+Polistes,Polistes rubiginosus
+Polistes,Polistes fuscatus
+Polistes,Polistes carolina
+Polistes,Polistes apachus
+Polistes,Polistes metricus
+Polistes,Polistes aurifer
+Polistes,Polistes dorsalis
+Animalia,Chordata
+Chordata,Amphibia
+Amphibia,Anura
+Anura,Ranidae
+Ranidae,Lithobates
+Lithobates,Lithobates sphenocephalus
+Lithobates,Lithobates grylio
+Lithobates,Lithobates clamitans
+Lithobates,Lithobates berlandieri
+Lithobates,Lithobates septentrionalis
+Lithobates,Lithobates pipiens
+Lithobates,Lithobates palustris
+Lithobates,Lithobates sylvaticus
+Lithobates,Lithobates catesbeianus
+Lithobates,Lithobates blairi
+Chordata,Reptilia
+Reptilia,Squamata
+Squamata,Phrynosomatidae
+Phrynosomatidae,Sceloporus
+Sceloporus,Sceloporus poinsettii
+Sceloporus,Sceloporus olivaceus
+Sceloporus,Sceloporus occidentalis
+Sceloporus,Sceloporus cowlesi
+Sceloporus,Sceloporus graciosus
+Sceloporus,Sceloporus magister
+Sceloporus,Sceloporus tristichus
+Sceloporus,Sceloporus spinosus
+Sceloporus,Sceloporus cyanogenys
+Sceloporus,Sceloporus variabilis
+Sceloporus,Sceloporus undulatus
+Sceloporus,Sceloporus torquatus
+Sceloporus,Sceloporus grammicus
+Sceloporus,Sceloporus clarkii
+Sceloporus,Sceloporus orcutti
+Sceloporus,Sceloporus uniformis
+Sceloporus,Sceloporus jarrovii
+Sceloporus,Sceloporus consobrinus
+Squamata,Viperidae
+Viperidae,Crotalus
+Crotalus,Crotalus oreganus
+Crotalus,Crotalus adamanteus
+Crotalus,Crotalus lepidus
+Crotalus,Crotalus pyrrhus
+Crotalus,Crotalus viridis
+Crotalus,Crotalus atrox
+Crotalus,Crotalus cerastes
+Crotalus,Crotalus horridus
+Crotalus,Crotalus molossus
+Crotalus,Crotalus scutulatus
+Crotalus,Crotalus ruber
+Squamata,Colubridae
+Colubridae,Thamnophis
+Thamnophis,Thamnophis sirtalis
+Thamnophis,Thamnophis cyrtopsis
+Thamnophis,Thamnophis proximus
+Thamnophis,Thamnophis marcianus
+Thamnophis,Thamnophis saurita
+Thamnophis,Thamnophis ordinoides
+Thamnophis,Thamnophis atratus
+Thamnophis,Thamnophis radix
+Thamnophis,Thamnophis hammondii
+Thamnophis,Thamnophis elegans
+Chordata,Aves
+Aves,Passeriformes
+Passeriformes,Icteridae
+Icteridae,Icterus
+Icterus,Icterus bullockii
+Icterus,Icterus pustulatus
+Icterus,Icterus gularis
+Icterus,Icterus cucullatus
+Icterus,Icterus parisorum
+Icterus,Icterus wagleri
+Icterus,Icterus abeillei
+Icterus,Icterus galbula
+Icterus,Icterus graduacauda
+Icterus,Icterus spurius
+Passeriformes,Corvidae
+Corvidae,Corvus
+Corvus,Corvus corax
+Corvus,Corvus monedula
+Corvus,Corvus ossifragus
+Corvus,Corvus cryptoleucus
+Corvus,Corvus splendens
+Corvus,Corvus albus
+Corvus,Corvus cornix
+Corvus,Corvus corone
+Corvus,Corvus caurinus
+Corvus,Corvus frugilegus
+Corvus,Corvus brachyrhynchos
+Corvus,Corvus macrorhynchos
+Passeriformes,Turdidae
+Turdidae,Turdus
+Turdus,Turdus iliacus
+Turdus,Turdus philomelos
+Turdus,Turdus pilaris
+Turdus,Turdus fuscater
+Turdus,Turdus rufiventris
+Turdus,Turdus viscivorus
+Turdus,Turdus ignobilis
+Turdus,Turdus grayi
+Turdus,Turdus merula
+Turdus,Turdus rufopalliatus
+Turdus,Turdus migratorius
+Passeriformes,Parulidae
+Parulidae,Setophaga
+Setophaga,Setophaga pensylvanica
+Setophaga,Setophaga petechia
+Setophaga,Setophaga tigrina
+Setophaga,Setophaga americana
+Setophaga,Setophaga cerulea
+Setophaga,Setophaga magnolia
+Setophaga,Setophaga pitiayumi
+Setophaga,Setophaga fusca
+Setophaga,Setophaga castanea
+Setophaga,Setophaga virens
+Setophaga,Setophaga occidentalis
+Setophaga,Setophaga townsendi
+Setophaga,Setophaga nigrescens
+Setophaga,Setophaga ruticilla
+Setophaga,Setophaga palmarum
+Setophaga,Setophaga discolor
+Setophaga,Setophaga caerulescens
+Setophaga,Setophaga citrina
+Setophaga,Setophaga striata
+Setophaga,Setophaga pinus
+Setophaga,Setophaga coronata
+Setophaga,Setophaga dominica
+Passeriformes,Vireonidae
+Vireonidae,Vireo
+Vireo,Vireo philadelphicus
+Vireo,Vireo flavifrons
+Vireo,Vireo olivaceus
+Vireo,Vireo plumbeus
+Vireo,Vireo bellii
+Vireo,Vireo griseus
+Vireo,Vireo solitarius
+Vireo,Vireo cassinii
+Vireo,Vireo huttoni
+Vireo,Vireo gilvus
+Aves,Charadriiformes
+Charadriiformes,Laridae
+Laridae,Larus
+Larus,Larus glaucoides
+Larus,Larus marinus
+Larus,Larus hyperboreus
+Larus,Larus occidentalis
+Larus,Larus glaucescens  occidentalis
+Larus,Larus heermanni
+Larus,Larus michahellis
+Larus,Larus livens
+Larus,Larus canus
+Larus,Larus glaucescens
+Larus,Larus dominicanus
+Larus,Larus fuscus
+Larus,Larus argentatus
+Larus,Larus delawarensis
+Larus,Larus californicus
+Charadriiformes,Scolopacidae
+Scolopacidae,Calidris
+Calidris,Calidris minutilla
+Calidris,Calidris alpina
+Calidris,Calidris alba
+Calidris,Calidris pusilla
+Calidris,Calidris fuscicollis
+Calidris,Calidris canutus
+Calidris,Calidris mauri
+Calidris,Calidris subruficollis
+Calidris,Calidris pugnax
+Calidris,Calidris virgata
+Calidris,Calidris himantopus
+Calidris,Calidris bairdii
+Calidris,Calidris melanotos
+Calidris,Calidris maritima
+Scolopacidae,Tringa
+Tringa,Tringa flavipes
+Tringa,Tringa semipalmata
+Tringa,Tringa incana
+Tringa,Tringa glareola
+Tringa,Tringa ochropus
+Tringa,Tringa melanoleuca
+Tringa,Tringa erythropus
+Tringa,Tringa stagnatilis
+Tringa,Tringa nebularia
+Tringa,Tringa totanus
+Tringa,Tringa solitaria
+Charadriiformes,Charadriidae
+Charadriidae,Charadrius
+Charadrius,Charadrius obscurus
+Charadrius,Charadrius melodus
+Charadrius,Charadrius alexandrinus
+Charadrius,Charadrius hiaticula
+Charadrius,Charadrius semipalmatus
+Charadrius,Charadrius wilsonia
+Charadrius,Charadrius vociferus
+Charadrius,Charadrius nivosus
+Charadrius,Charadrius tricollaris
+Charadrius,Charadrius dubius
+Charadrius,Charadrius bicinctus
+Aves,Accipitriformes
+Accipitriformes,Accipitridae
+Accipitridae,Buteo
+Buteo,Buteo jamaicensis
+Buteo,Buteo swainsoni
+Buteo,Buteo lagopus
+Buteo,Buteo lineatus
+Buteo,Buteo plagiatus
+Buteo,Buteo buteo
+Buteo,Buteo albonotatus
+Buteo,Buteo regalis
+Buteo,Buteo brachyurus
+Buteo,Buteo platypterus
+Life,Plantae
+Plantae,Tracheophyta
+Tracheophyta,Magnoliopsida
+Magnoliopsida,Ericales
+Ericales,Primulaceae
+Primulaceae,Lysimachia
+Lysimachia,Lysimachia terrestris
+Lysimachia,Lysimachia punctata
+Lysimachia,Lysimachia vulgaris
+Lysimachia,Lysimachia latifolia
+Lysimachia,Lysimachia quadriflora
+Lysimachia,Lysimachia arvensis
+Lysimachia,Lysimachia quadrifolia
+Lysimachia,Lysimachia nummularia
+Lysimachia,Lysimachia ciliata
+Lysimachia,Lysimachia europaea
+Lysimachia,Lysimachia thyrsiflora
+Lysimachia,Lysimachia borealis
+Lysimachia,Lysimachia maritima
+Ericales,Ericaceae
+Ericaceae,Vaccinium
+Vaccinium,Vaccinium arboreum
+Vaccinium,Vaccinium oxycoccos
+Vaccinium,Vaccinium ovatum
+Vaccinium,Vaccinium stamineum
+Vaccinium,Vaccinium parvifolium
+Vaccinium,Vaccinium macrocarpon
+Vaccinium,Vaccinium myrtillus
+Vaccinium,Vaccinium myrtilloides
+Vaccinium,Vaccinium corymbosum
+Vaccinium,Vaccinium angustifolium
+Vaccinium,Vaccinium uliginosum
+Vaccinium,Vaccinium vitis-idaea
+Magnoliopsida,Asterales
+Asterales,Asteraceae
+Asteraceae,Cirsium
+Cirsium,Cirsium occidentale
+Cirsium,Cirsium muticum
+Cirsium,Cirsium arvense
+Cirsium,Cirsium horridulum
+Cirsium,Cirsium oleraceum
+Cirsium,Cirsium palustre
+Cirsium,Cirsium undulatum
+Cirsium,Cirsium vulgare
+Cirsium,Cirsium discolor
+Cirsium,Cirsium texanum
+Asteraceae,Symphyotrichum
+Symphyotrichum,Symphyotrichum pilosum
+Symphyotrichum,Symphyotrichum patens
+Symphyotrichum,Symphyotrichum subulatum
+Symphyotrichum,Symphyotrichum ericoides
+Symphyotrichum,Symphyotrichum chilense
+Symphyotrichum,Symphyotrichum divaricatum
+Symphyotrichum,Symphyotrichum laeve
+Symphyotrichum,Symphyotrichum lateriflorum
+Symphyotrichum,Symphyotrichum cordifolium
+Symphyotrichum,Symphyotrichum puniceum
+Symphyotrichum,Symphyotrichum novae-angliae
+Symphyotrichum,Symphyotrichum drummondii
+Symphyotrichum,Symphyotrichum lanceolatum
+Asteraceae,Solidago
+Solidago,Solidago nemoralis
+Solidago,Solidago gigantea
+Solidago,Solidago rugosa
+Solidago,Solidago altissima
+Solidago,Solidago sempervirens
+Solidago,Solidago virgaurea
+Solidago,Solidago canadensis
+Solidago,Solidago flexicaulis
+Solidago,Solidago juncea
+Solidago,Solidago velutina
+Solidago,Solidago caesia
+Solidago,Solidago bicolor
+Solidago,Solidago ptarmicoides
+Solidago,Solidago rigida
+Asteraceae,Artemisia
+Artemisia,Artemisia tridentata
+Artemisia,Artemisia californica
+Artemisia,Artemisia douglasiana
+Artemisia,Artemisia vulgaris
+Artemisia,Artemisia pycnocephala
+Artemisia,Artemisia filifolia
+Artemisia,Artemisia ludoviciana
+Artemisia,Artemisia campestris
+Artemisia,Artemisia dracunculus
+Artemisia,Artemisia frigida
+Magnoliopsida,Sapindales
+Sapindales,Sapindaceae
+Sapindaceae,Acer
+Acer,Acer platanoides
+Acer,Acer glabrum
+Acer,Acer saccharum
+Acer,Acer grandidentatum
+Acer,Acer negundo
+Acer,Acer macrophyllum
+Acer,Acer pseudoplatanus
+Acer,Acer campestre
+Acer,Acer rubrum
+Acer,Acer saccharinum
+Acer,Acer spicatum
+Acer,Acer circinatum
+Acer,Acer nigrum
+Acer,Acer floridanum
+Acer,Acer ginnala
+Acer,Acer pensylvanicum
+Magnoliopsida,Fabales
+Fabales,Fabaceae
+Fabaceae,Trifolium
+Trifolium,Trifolium subterraneum
+Trifolium,Trifolium arvense
+Trifolium,Trifolium incarnatum
+Trifolium,Trifolium willdenovii
+Trifolium,Trifolium hybridum
+Trifolium,Trifolium hirtum
+Trifolium,Trifolium campestre
+Trifolium,Trifolium repens
+Trifolium,Trifolium angustifolium
+Trifolium,Trifolium pratense
+Trifolium,Trifolium dubium
+Trifolium,Trifolium aureum
+Trifolium,Trifolium depauperatum
+Fabaceae,Lupinus
+Lupinus,Lupinus albifrons
+Lupinus,Lupinus arizonicus
+Lupinus,Lupinus polyphyllus
+Lupinus,Lupinus nootkatensis
+Lupinus,Lupinus hirsutissimus
+Lupinus,Lupinus texensis
+Lupinus,Lupinus arboreus
+Lupinus,Lupinus succulentus
+Lupinus,Lupinus bicolor
+Lupinus,Lupinus nanus
+Lupinus,Lupinus microcarpus
+Lupinus,Lupinus argenteus
+Lupinus,Lupinus perennis
+Magnoliopsida,Cornales
+Cornales,Cornaceae
+Cornaceae,Cornus
+Cornus,Cornus nuttallii
+Cornus,Cornus mas
+Cornus,Cornus sericea
+Cornus,Cornus sanguinea
+Cornus,Cornus canadensis
+Cornus,Cornus drummondii
+Cornus,Cornus florida
+Cornus,Cornus alternifolia
+Cornus,Cornus kousa
+Cornus,Cornus racemosa
+Cornus,Cornus unalaschkensis
+Cornus,Cornus rugosa
+Cornus,Cornus amomum
+Magnoliopsida,Saxifragales
+Saxifragales,Grossulariaceae
+Grossulariaceae,Ribes
+Ribes,Ribes malvaceum
+Ribes,Ribes sanguineum
+Ribes,Ribes roezlii
+Ribes,Ribes aureum
+Ribes,Ribes americanum
+Ribes,Ribes cynosbati
+Ribes,Ribes cereum
+Ribes,Ribes indecorum
+Ribes,Ribes bracteosum
+Ribes,Ribes speciosum
+Magnoliopsida,Dipsacales
+Dipsacales,Caprifoliaceae
+Caprifoliaceae,Lonicera
+Lonicera,Lonicera morrowii
+Lonicera,Lonicera tatarica
+Lonicera,Lonicera ciliosa
+Lonicera,Lonicera sempervirens
+Lonicera,Lonicera dioica
+Lonicera,Lonicera canadensis
+Lonicera,Lonicera hispidula
+Lonicera,Lonicera xylosteum
+Lonicera,Lonicera periclymenum
+Lonicera,Lonicera japonica
+Lonicera,Lonicera maackii
+Lonicera,Lonicera involucrata
+Lonicera,Lonicera subspicata
+Dipsacales,Viburnaceae
+Viburnaceae,Viburnum
+Viburnum,Viburnum prunifolium
+Viburnum,Viburnum edule
+Viburnum,Viburnum rafinesquianum
+Viburnum,Viburnum lentago
+Viburnum,Viburnum acerifolium
+Viburnum,Viburnum tinus
+Viburnum,Viburnum nudum
+Viburnum,Viburnum lantana
+Viburnum,Viburnum lantanoides
+Viburnum,Viburnum rufidulum
+Viburnum,Viburnum opulus
+Viburnum,Viburnum dentatum
+Magnoliopsida,Myrtales
+Myrtales,Onagraceae
+Onagraceae,Oenothera
+Oenothera,Oenothera suffrutescens
+Oenothera,Oenothera biennis
+Oenothera,Oenothera speciosa
+Oenothera,Oenothera macrocarpa
+Oenothera,Oenothera rosea
+Oenothera,Oenothera cespitosa
+Oenothera,Oenothera curtiflora
+Oenothera,Oenothera laciniata
+Oenothera,Oenothera drummondii
+Oenothera,Oenothera triloba
+Oenothera,Oenothera elata
+Oenothera,Oenothera suffulta
+Oenothera,Oenothera gaura
+Magnoliopsida,Caryophyllales
+Caryophyllales,Cactaceae
+Cactaceae,Opuntia
+Opuntia,Opuntia ficus-indica
+Opuntia,Opuntia robusta
+Opuntia,Opuntia rufida
+Opuntia,Opuntia cespitosa
+Opuntia,Opuntia basilaris
+Opuntia,Opuntia phaeacantha
+Opuntia,Opuntia polyacantha
+Opuntia,Opuntia littoralis
+Opuntia,Opuntia microdasys
+Opuntia,Opuntia engelmannii
+Opuntia,Opuntia chlorotica
+Opuntia,Opuntia macrocentra
+Opuntia,Opuntia humifusa
+Opuntia,Opuntia fragilis
+Opuntia,Opuntia macrorhiza
+Cactaceae,Cylindropuntia
+Cylindropuntia,Cylindropuntia imbricata
+Cylindropuntia,Cylindropuntia spinosior
+Cylindropuntia,Cylindropuntia prolifera
+Cylindropuntia,Cylindropuntia ganderi
+Cylindropuntia,Cylindropuntia californica
+Cylindropuntia,Cylindropuntia fulgida
+Cylindropuntia,Cylindropuntia ramosissima
+Cylindropuntia,Cylindropuntia versicolor
+Cylindropuntia,Cylindropuntia leptocaulis
+Cylindropuntia,Cylindropuntia cholla
+Cylindropuntia,Cylindropuntia whipplei
+Cylindropuntia,Cylindropuntia echinocarpa
+Cylindropuntia,Cylindropuntia acanthocarpa
+Cylindropuntia,Cylindropuntia bigelovii
+Caryophyllales,Caryophyllaceae
+Caryophyllaceae,Silene
+Silene,Silene latifolia
+Silene,Silene laciniata
+Silene,Silene acaulis
+Silene,Silene flos-cuculi
+Silene,Silene virginica
+Silene,Silene dioica
+Silene,Silene coronaria
+Silene,Silene regia
+Silene,Silene uniflora
+Silene,Silene gallica
+Silene,Silene vulgaris
+Silene,Silene stellata
+Caryophyllales,Polygonaceae
+Polygonaceae,Persicaria
+Persicaria,Persicaria lapathifolia
+Persicaria,Persicaria longiseta
+Persicaria,Persicaria perfoliata
+Persicaria,Persicaria maculosa
+Persicaria,Persicaria capitata
+Persicaria,Persicaria amphibia
+Persicaria,Persicaria hydropiperoides
+Persicaria,Persicaria pensylvanica
+Persicaria,Persicaria punctata
+Persicaria,Persicaria chinensis
+Persicaria,Persicaria sagittata
+Persicaria,Persicaria virginiana
+Magnoliopsida,Gentianales
+Gentianales,Apocynaceae
+Apocynaceae,Asclepias
+Asclepias,Asclepias fascicularis
+Asclepias,Asclepias exaltata
+Asclepias,Asclepias incarnata
+Asclepias,Asclepias purpurascens
+Asclepias,Asclepias eriocarpa
+Asclepias,Asclepias variegata
+Asclepias,Asclepias hirtella
+Asclepias,Asclepias lanceolata
+Asclepias,Asclepias cordifolia
+Asclepias,Asclepias quadrifolia
+Asclepias,Asclepias perennis
+Asclepias,Asclepias subulata
+Asclepias,Asclepias speciosa
+Asclepias,Asclepias latifolia
+Asclepias,Asclepias tuberosa
+Asclepias,Asclepias amplexicaulis
+Asclepias,Asclepias syriaca
+Asclepias,Asclepias asperula
+Asclepias,Asclepias verticillata
+Asclepias,Asclepias oenotheroides
+Asclepias,Asclepias curassavica
+Asclepias,Asclepias viridiflora
+Asclepias,Asclepias viridis
+Asclepias,Asclepias linaria
+Asclepias,Asclepias subverticillata
+Magnoliopsida,Oxalidales
+Oxalidales,Oxalidaceae
+Oxalidaceae,Oxalis
+Oxalis,Oxalis drummondii
+Oxalis,Oxalis montana
+Oxalis,Oxalis obtusa
+Oxalis,Oxalis articulata
+Oxalis,Oxalis purpurea
+Oxalis,Oxalis dillenii
+Oxalis,Oxalis violacea
+Oxalis,Oxalis incarnata
+Oxalis,Oxalis acetosella
+Oxalis,Oxalis debilis
+Oxalis,Oxalis oregana
+Oxalis,Oxalis corniculata
+Oxalis,Oxalis pes-caprae
+Oxalis,Oxalis stricta
+Oxalis,Oxalis latifolia
+Magnoliopsida,Malpighiales
+Malpighiales,Euphorbiaceae
+Euphorbiaceae,Euphorbia
+Euphorbia,Euphorbia dentata
+Euphorbia,Euphorbia cyathophora
+Euphorbia,Euphorbia heterophylla
+Euphorbia,Euphorbia corollata
+Euphorbia,Euphorbia antisyphilitica
+Euphorbia,Euphorbia bicolor
+Euphorbia,Euphorbia marginata
+Euphorbia,Euphorbia polycarpa
+Euphorbia,Euphorbia hirta
+Euphorbia,Euphorbia hyssopifolia
+Euphorbia,Euphorbia albomarginata
+Euphorbia,Euphorbia hypericifolia
+Euphorbia,Euphorbia prostrata
+Euphorbia,Euphorbia nutans
+Euphorbia,Euphorbia serpens
+Euphorbia,Euphorbia maculata
+Euphorbia,Euphorbia myrsinites
+Euphorbia,Euphorbia helioscopia
+Euphorbia,Euphorbia characias
+Euphorbia,Euphorbia lathyris
+Euphorbia,Euphorbia oblongata
+Euphorbia,Euphorbia peplus
+Euphorbia,Euphorbia cyparissias
+Euphorbia,Euphorbia virgata
+Euphorbia,Euphorbia paralias
+Malpighiales,Violaceae
+Violaceae,Viola
+Viola,Viola pedata
+Viola,Viola purpurea
+Viola,Viola sororia
+Viola,Viola pubescens
+Viola,Viola nuttallii
+Viola,Viola striata
+Viola,Viola canadensis
+Viola,Viola rostrata
+Viola,Viola adunca
+Viola,Viola tricolor
+Viola,Viola bicolor
+Viola,Viola labradorica
+Viola,Viola primulifolia
+Viola,Viola hastata
+Viola,Viola ocellata
+Viola,Viola sagittata
+Viola,Viola odorata
+Viola,Viola sempervirens
+Viola,Viola pedunculata
+Viola,Viola arvensis
+Viola,Viola lanceolata
+Viola,Viola rotundifolia
+Viola,Viola glabella
+Magnoliopsida,Geraniales
+Geraniales,Geraniaceae
+Geraniaceae,Geranium
+Geranium,Geranium caespitosum
+Geranium,Geranium carolinianum
+Geranium,Geranium richardsonii
+Geranium,Geranium molle
+Geranium,Geranium maculatum
+Geranium,Geranium lucidum
+Geranium,Geranium robertianum
+Geranium,Geranium sylvaticum
+Geranium,Geranium dissectum
+Geranium,Geranium viscosissimum
+Geranium,Geranium pratense
+Geranium,Geranium sanguineum
+Magnoliopsida,Fagales
+Fagales,Fagaceae
+Fagaceae,Quercus
+Quercus,Quercus robur
+Quercus,Quercus kelloggii
+Quercus,Quercus alba
+Quercus,Quercus stellata
+Quercus,Quercus garryana
+Quercus,Quercus ilex
+Quercus,Quercus pagoda
+Quercus,Quercus ilicifolia
+Quercus,Quercus agrifolia
+Quercus,Quercus berberidifolia
+Quercus,Quercus nigra
+Quercus,Quercus coccinea
+Quercus,Quercus velutina
+Quercus,Quercus rubra
+Quercus,Quercus douglasii
+Quercus,Quercus fusiformis
+Quercus,Quercus buckleyi
+Quercus,Quercus phellos
+Quercus,Quercus durata
+Quercus,Quercus michauxii
+Quercus,Quercus wislizeni
+Quercus,Quercus imbricaria
+Quercus,Quercus montana
+Quercus,Quercus chrysolepis
+Quercus,Quercus marilandica
+Quercus,Quercus laevis
+Quercus,Quercus gambelii
+Quercus,Quercus muehlenbergii
+Quercus,Quercus macrocarpa
+Quercus,Quercus bicolor
+Quercus,Quercus shumardii
+Quercus,Quercus palustris
+Quercus,Quercus suber
+Quercus,Quercus geminata
+Quercus,Quercus falcata
+Quercus,Quercus lobata
+Quercus,Quercus turbinella
+Quercus,Quercus virginiana
+Magnoliopsida,Ranunculales
+Ranunculales,Ranunculaceae
+Ranunculaceae,Clematis
+Clematis,Clematis drummondii
+Clematis,Clematis lasiantha
+Clematis,Clematis vitalba
+Clematis,Clematis crispa
+Clematis,Clematis texensis
+Clematis,Clematis pitcheri
+Clematis,Clematis terniflora
+Clematis,Clematis virginiana
+Clematis,Clematis paniculata
+Clematis,Clematis ligusticifolia
+Clematis,Clematis occidentalis
+Ranunculaceae,Anemone
+Anemone,Anemone hepatica
+Anemone,Anemone acutiloba
+Anemone,Anemone quinquefolia
+Anemone,Anemone canadensis
+Anemone,Anemone ranunculoides
+Anemone,Anemone occidentalis
+Anemone,Anemone multifida
+Anemone,Anemone patens
+Anemone,Anemone cylindrica
+Anemone,Anemone berlandieri
+Anemone,Anemone nemorosa
+Anemone,Anemone virginiana
+Ranunculaceae,Ranunculus
+Ranunculus,Ranunculus fascicularis
+Ranunculus,Ranunculus repens
+Ranunculus,Ranunculus bulbosus
+Ranunculus,Ranunculus glaberrimus
+Ranunculus,Ranunculus acris
+Ranunculus,Ranunculus californicus
+Ranunculus,Ranunculus abortivus
+Ranunculus,Ranunculus recurvatus
+Ranunculus,Ranunculus muricatus
+Ranunculus,Ranunculus sceleratus
+Ranunculus,Ranunculus aquatilis
+Ranunculus,Ranunculus hispidus
+Ranunculus,Ranunculus flammula
+Ranunculus,Ranunculus occidentalis
+Magnoliopsida,Lamiales
+Lamiales,Orobanchaceae
+Orobanchaceae,Castilleja
+Castilleja,Castilleja applegatei
+Castilleja,Castilleja linariifolia
+Castilleja,Castilleja chromosa
+Castilleja,Castilleja tenuiflora
+Castilleja,Castilleja foliolosa
+Castilleja,Castilleja miniata
+Castilleja,Castilleja attenuata
+Castilleja,Castilleja exserta
+Castilleja,Castilleja coccinea
+Castilleja,Castilleja affinis
+Castilleja,Castilleja indivisa
+Castilleja,Castilleja densiflora
+Castilleja,Castilleja arvensis
+Castilleja,Castilleja integra
+Castilleja,Castilleja rubicundula
+Castilleja,Castilleja purpurea
+Castilleja,Castilleja wightii
+Lamiales,Lamiaceae
+Lamiaceae,Salvia
+Salvia,Salvia ballotiflora
+Salvia,Salvia coccinea
+Salvia,Salvia dorrii
+Salvia,Salvia mexicana
+Salvia,Salvia farinacea
+Salvia,Salvia azurea
+Salvia,Salvia apiana
+Salvia,Salvia roemeriana
+Salvia,Salvia greggii
+Salvia,Salvia microphylla
+Salvia,Salvia texana
+Salvia,Salvia columbariae
+Salvia,Salvia leucophylla
+Salvia,Salvia mellifera
+Salvia,Salvia leucantha
+Salvia,Salvia spathacea
+Salvia,Salvia pratensis
+Salvia,Salvia lyrata
+Lamiales,Verbenaceae
+Verbenaceae,Verbena
+Verbena,Verbena rigida
+Verbena,Verbena stricta
+Verbena,Verbena hastata
+Verbena,Verbena officinalis
+Verbena,Verbena brasiliensis
+Verbena,Verbena bracteata
+Verbena,Verbena bonariensis
+Verbena,Verbena halei
+Verbena,Verbena urticifolia
+Verbena,Verbena lasiostachys
+Lamiales,Plantaginaceae
+Plantaginaceae,Veronica
+Veronica,Veronica hederifolia
+Veronica,Veronica stricta
+Veronica,Veronica polita
+Veronica,Veronica persica
+Veronica,Veronica filiformis
+Veronica,Veronica officinalis
+Veronica,Veronica chamaedrys
+Veronica,Veronica arvensis
+Veronica,Veronica regina-nivalis
+Veronica,Veronica peregrina
+Veronica,Veronica anagallis-aquatica
+Veronica,Veronica americana
+Veronica,Veronica serpyllifolia
+Plantaginaceae,Penstemon
+Penstemon,Penstemon centranthifolius
+Penstemon,Penstemon barbatus
+Penstemon,Penstemon spectabilis
+Penstemon,Penstemon cobaea
+Penstemon,Penstemon heterophyllus
+Penstemon,Penstemon hirsutus
+Penstemon,Penstemon newberryi
+Penstemon,Penstemon palmeri
+Penstemon,Penstemon digitalis
+Penstemon,Penstemon eatonii
+Magnoliopsida,Solanales
+Solanales,Solanaceae
+Solanaceae,Solanum
+Solanum,Solanum pseudocapsicum
+Solanum,Solanum rostratum
+Solanum,Solanum chenopodioides
+Solanum,Solanum laciniatum
+Solanum,Solanum erianthum
+Solanum,Solanum umbelliferum
+Solanum,Solanum xanti
+Solanum,Solanum nigrum
+Solanum,Solanum triquetrum
+Solanum,Solanum douglasii
+Solanum,Solanum americanum
+Solanum,Solanum ptychanthum
+Solanum,Solanum carolinense
+Solanum,Solanum mauritianum
+Solanum,Solanum diphyllum
+Solanum,Solanum elaeagnifolium
+Solanum,Solanum dimidiatum
+Solanum,Solanum lycopersicum
+Solanum,Solanum dulcamara
+Solanales,Convolvulaceae
+Convolvulaceae,Ipomoea
+Ipomoea,Ipomoea cairica
+Ipomoea,Ipomoea batatas
+Ipomoea,Ipomoea triloba
+Ipomoea,Ipomoea pes-caprae
+Ipomoea,Ipomoea imperati
+Ipomoea,Ipomoea hederacea
+Ipomoea,Ipomoea indica
+Ipomoea,Ipomoea sagittata
+Ipomoea,Ipomoea cordatotriloba
+Ipomoea,Ipomoea lacunosa
+Ipomoea,Ipomoea alba
+Ipomoea,Ipomoea hederifolia
+Ipomoea,Ipomoea pandurata
+Ipomoea,Ipomoea purpurea
+Ipomoea,Ipomoea quamoclit
+Ipomoea,Ipomoea obscura
+Magnoliopsida,Rosales
+Rosales,Rosaceae
+Rosaceae,Rosa
+Rosa,Rosa rugosa
+Rosa,Rosa carolina
+Rosa,Rosa multiflora
+Rosa,Rosa nutkana
+Rosa,Rosa woodsii
+Rosa,Rosa palustris
+Rosa,Rosa gymnocarpa
+Rosa,Rosa bracteata
+Rosa,Rosa arkansana
+Rosa,Rosa canina
+Rosa,Rosa acicularis
+Rosa,Rosa californica
+Rosaceae,Rubus
+Rubus,Rubus parviflorus
+Rubus,Rubus allegheniensis
+Rubus,Rubus arcticus
+Rubus,Rubus fruticosus
+Rubus,Rubus caesius
+Rubus,Rubus spectabilis
+Rubus,Rubus leucodermis
+Rubus,Rubus odoratus
+Rubus,Rubus armeniacus
+Rubus,Rubus pubescens
+Rubus,Rubus ursinus
+Rubus,Rubus cissoides
+Rubus,Rubus chamaemorus
+Rubus,Rubus laciniatus
+Rubus,Rubus idaeus
+Rubus,Rubus phoenicolasius
+Rubus,Rubus trivialis
+Rubus,Rubus flagellaris
+Rubus,Rubus occidentalis
+Rubus,Rubus pedatus
+Rosaceae,Prunus
+Prunus,Prunus avium
+Prunus,Prunus padus
+Prunus,Prunus americana
+Prunus,Prunus caroliniana
+Prunus,Prunus spinosa
+Prunus,Prunus cerasifera
+Prunus,Prunus persica
+Prunus,Prunus emarginata
+Prunus,Prunus laurocerasus
+Prunus,Prunus virginiana
+Prunus,Prunus serotina
+Prunus,Prunus pensylvanica
+Prunus,Prunus ilicifolia
+Prunus,Prunus mexicana
+Prunus,Prunus pumila
+Rosaceae,Potentilla
+Potentilla,Potentilla argentea
+Potentilla,Potentilla reptans
+Potentilla,Potentilla simplex
+Potentilla,Potentilla gracilis
+Potentilla,Potentilla recta
+Potentilla,Potentilla norvegica
+Potentilla,Potentilla anserina
+Potentilla,Potentilla erecta
+Potentilla,Potentilla indica
+Potentilla,Potentilla canadensis
+Magnoliopsida,Brassicales
+Brassicales,Brassicaceae
+Brassicaceae,Cardamine
+Cardamine,Cardamine californica
+Cardamine,Cardamine diphylla
+Cardamine,Cardamine nuttallii
+Cardamine,Cardamine concatenata
+Cardamine,Cardamine pratensis
+Cardamine,Cardamine impatiens
+Cardamine,Cardamine bulbosa
+Cardamine,Cardamine hirsuta
+Cardamine,Cardamine flexuosa
+Cardamine,Cardamine douglassii
+Tracheophyta,Liliopsida
+Liliopsida,Liliales
+Liliales,Melanthiaceae
+Melanthiaceae,Trillium
+Trillium,Trillium recurvatum
+Trillium,Trillium luteum
+Trillium,Trillium ovatum
+Trillium,Trillium flexipes
+Trillium,Trillium erectum
+Trillium,Trillium albidum
+Trillium,Trillium cuneatum
+Trillium,Trillium undulatum
+Trillium,Trillium chloropetalum
+Trillium,Trillium cernuum
+Trillium,Trillium catesbaei
+Trillium,Trillium grandiflorum
+Trillium,Trillium sessile
+Liliales,Liliaceae
+Liliaceae,Calochortus
+Calochortus,Calochortus catalinae
+Calochortus,Calochortus leichtlinii
+Calochortus,Calochortus weedii
+Calochortus,Calochortus pulchellus
+Calochortus,Calochortus venustus
+Calochortus,Calochortus amabilis
+Calochortus,Calochortus gunnisonii
+Calochortus,Calochortus splendens
+Calochortus,Calochortus albus
+Calochortus,Calochortus umbellatus
+Calochortus,Calochortus nuttallii
+Calochortus,Calochortus tolmiei
+Calochortus,Calochortus luteus
+Calochortus,Calochortus uniflorus
+Liliales,Smilacaceae
+Smilacaceae,Smilax
+Smilax,Smilax laurifolia
+Smilax,Smilax auriculata
+Smilax,Smilax glauca
+Smilax,Smilax aspera
+Smilax,Smilax tamnoides
+Smilax,Smilax rotundifolia
+Smilax,Smilax lasioneura
+Smilax,Smilax smallii
+Smilax,Smilax herbacea
+Smilax,Smilax bona-nox
+Liliopsida,Poales
+Poales,Cyperaceae
+Cyperaceae,Carex
+Carex,Carex grayi
+Carex,Carex lupulina
+Carex,Carex intumescens
+Carex,Carex flava
+Carex,Carex vulpinoidea
+Carex,Carex pensylvanica
+Carex,Carex hystericina
+Carex,Carex obnupta
+Carex,Carex crinita
+Carex,Carex plantaginea
+Carex,Carex pendula
+Carex,Carex aurea
+Carex,Carex gracillima
+Carex,Carex cherokeensis
+Carex,Carex sprengelii
+Liliopsida,Asparagales
+Asparagales,Iridaceae
+Iridaceae,Iris
+Iris,Iris cristata
+Iris,Iris douglasiana
+Iris,Iris missouriensis
+Iris,Iris pseudacorus
+Iris,Iris macrosiphon
+Iris,Iris tenax
+Iris,Iris virginica
+Iris,Iris germanica
+Iris,Iris foetidissima
+Iris,Iris versicolor
+Asparagales,Asparagaceae
+Asparagaceae,Yucca
+Yucca,Yucca filamentosa
+Yucca,Yucca arkansana
+Yucca,Yucca elata
+Yucca,Yucca pallida
+Yucca,Yucca treculeana
+Yucca,Yucca brevifolia
+Yucca,Yucca glauca
+Yucca,Yucca schidigera
+Yucca,Yucca baccata
+Yucca,Yucca rupicola
+Tracheophyta,Pinopsida
+Pinopsida,Pinales
+Pinales,Pinaceae
+Pinaceae,Pinus
+Pinus,Pinus flexilis
+Pinus,Pinus lambertiana
+Pinus,Pinus monticola
+Pinus,Pinus strobus
+Pinus,Pinus edulis
+Pinus,Pinus monophylla
+Pinus,Pinus longaeva
+Pinus,Pinus jeffreyi
+Pinus,Pinus ponderosa
+Pinus,Pinus taeda
+Pinus,Pinus torreyana
+Pinus,Pinus coulteri
+Pinus,Pinus virginiana
+Pinus,Pinus rigida
+Pinus,Pinus sabiniana
+Pinus,Pinus palustris
+Pinus,Pinus radiata
+Pinus,Pinus elliottii
+Pinus,Pinus contorta
+Pinus,Pinus banksiana
+Pinus,Pinus echinata
+Pinus,Pinus resinosa
+Pinus,Pinus sylvestris
+Tracheophyta,Polypodiopsida
+Polypodiopsida,Polypodiales
+Polypodiales,Aspleniaceae
+Aspleniaceae,Asplenium
+Asplenium,Asplenium platyneuron
+Asplenium,Asplenium polyodon
+Asplenium,Asplenium trichomanes
+Asplenium,Asplenium flabellifolium
+Asplenium,Asplenium ruta-muraria
+Asplenium,Asplenium gracillimum
+Asplenium,Asplenium scolopendrium
+Asplenium,Asplenium nidus
+Asplenium,Asplenium viride
+Asplenium,Asplenium oblongifolium
+Asplenium,Asplenium flaccidum
+Asplenium,Asplenium bulbiferum
+Asplenium,Asplenium ceterach
+Asplenium,Asplenium rhizophyllum
