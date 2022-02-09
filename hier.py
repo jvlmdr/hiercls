@@ -1,10 +1,9 @@
 import collections
-from collections.abc import MutableSequence, Sequence
 import csv
 from functools import partial
 import itertools
 import operator
-from typing import Any, TextIO, Callable
+from typing import Any, Callable, Dict, List, MutableSequence, Sequence, TextIO, Tuple
 
 import jax
 from jax import numpy as jnp
@@ -23,10 +22,10 @@ class Hierarchy:
     def num_nodes(self) -> int:
         return len(self.parents)
 
-    def edges(self) -> list[tuple[int, int]]:
+    def edges(self) -> List[Tuple[int, int]]:
         return list(zip(self.parents[1:], itertools.count(1)))
 
-    def children(self) -> dict[int, np.ndarray]:
+    def children(self) -> Dict[int, np.ndarray]:
         result = collections.defaultdict(list)
         for i, j in self.edges():
             result[i].append(j)
@@ -111,15 +110,18 @@ class Hierarchy:
 
 
 def make_hierarchy_from_name_pairs(
-        name_pairs : list[tuple[str, str]],
+        name_pairs : List[Tuple[str, str]],
         ):
     num_edges = len(name_pairs)
     num_nodes = num_edges + 1
-    name_to_index = {}
-    root, _ = name_pairs[0]
-    name_to_index[root] = 0
+    # Data structures to populate from list of pairs.
     parents = np.full([num_nodes], -1, dtype=int)
     names = [None] * num_nodes
+    name_to_index = {}
+    # Set name of root from first pair.
+    root, _ = name_pairs[0]
+    names[0] = root
+    name_to_index[root] = 0
     for r, (u, v) in enumerate(name_pairs):
         if v in name_to_index:
             raise ValueError('has multiple parents', v)
@@ -131,7 +133,7 @@ def make_hierarchy_from_name_pairs(
     return Hierarchy(parents), names
 
 
-def load_name_pairs(f: TextIO, delimiter=',') -> list[tuple[str, str]]:
+def load_name_pairs(f: TextIO, delimiter=',') -> List[Tuple[str, str]]:
     """Load from file containing (parent, node) pairs."""
     reader = csv.reader(f)
     pairs = []
@@ -156,7 +158,7 @@ class HierSoftmax:
 
     def internal_log_softmax(
             self, scores, axis=-1,
-            ) -> tuple[Sequence[int], Sequence[list[int]], Sequence]:
+            ) -> Tuple[Sequence[int], Sequence[List[int]], Sequence]:
         """Returns node, children, log_p for softmax at each internal node."""
         assert axis == -1
         internal_nodes, = np.logical_not(self.tree.leaf_mask()).nonzero()
