@@ -308,8 +308,8 @@ class MultiSigmoid:
         binary_labels_for_leaf = is_ancestor[1:, is_leaf].T
         # scores has shape [Ni..., num_nodes - 1, Nj...]
         # labels has shape [Ni..., Nj...]
-        # binary_labels has shape [Ni..., num_nodes - 1, Nj...]
-        binary_labels = jnp.moveaxis(binary_labels_for_leaf[labels], -1, axis)
+        # q has shape [Ni..., num_nodes - 1, Nj...]
+        q = jnp.moveaxis(binary_labels_for_leaf[labels], -1, axis)
         # Require that axis is -1.
         loss = q * nn.log_sigmoid(scores) + (1 - q) * nn.log_sigmoid(-scores)
         # TODO: Add per-class weighting?
@@ -320,7 +320,7 @@ class MultiSigmoid:
         shape = scores.shape[:axis] + scores.shape[axis:][1:]
         zero = jnp.expand_dims(jnp.zeros(shape, dtype=scores.dtype), axis=axis)
         log_prob = jnp.concatenate([zero, nn.log_sigmoid(scores)], axis=axis)
-        return log_pro
+        return log_prob
 
     def likelihood(self, scores, axis=-1):
         return jnp.exp(self.log_likelihood(scores, axis=axis))
