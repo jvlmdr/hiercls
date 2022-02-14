@@ -4,20 +4,24 @@ from absl import logging
 import ml_collections
 from ml_collections import config_flags
 import torch
-from torch import nn
+from torch import _pin_memory, nn
 from torch import optim
 import torchvision
 from torchvision import transforms
 import tqdm
 
+import datasets
 import models.kuangliu_cifar.resnet
 import models.moit.preact_resnet
 
-CIFAR10_ROOT = '/media/jack/data1/data/torchvision/cifar10'
-NUM_CLASSES = 10
-EVAL_BATCH_SIZE = 100
+EVAL_BATCH_SIZE = 256
 
 default_config = ml_collections.ConfigDict({
+    'dataset': 'imagenet',
+    'dataset_root': '/home/jack/data/torchvision/imagenet',
+    'train_split': 'train',
+    'eval_split': 'val',
+    # Config for training algorithm.
     'train': ml_collections.ConfigDict({
         'batch_size': 64,
         'num_epochs': 100,
@@ -37,37 +41,33 @@ def main(_):
 
 def train(config):
     device = torch.device('cuda')
+    num_classes = get_num_classes(config.dataset)
 
-    train_transform = transforms.Compose([
-        transforms.Pad(4),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomCrop(32),
-        transforms.ToTensor(),
-    ])
-    train_dataset = torchvision.datasets.CIFAR10(
-        CIFAR10_ROOT,
-        train=True,
-        transform=train_transform)
+    train_dataset = make_dataset(
+        config.dataset,
+        config.dataset_root,
+        config.train_split,
+        mode='train')
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
         batch_size=config.train.batch_size,
-        shuffle=True)
+        shuffle=True,
+        pin_memory=True)
 
-    eval_transform = transforms.Compose([
-        transforms.ToTensor(),
-    ])
-    test_dataset = torchvision.datasets.CIFAR10(
-        CIFAR10_ROOT,
-        train=False,
-        transform=eval_transform)
-    test_loader = torch.utils.data.DataLoader(
-        dataset=test_dataset,
+    eval_dataset = make_dataset(
+        config.dataset,
+        config.dataset_root,
+        config.eval_split,
+        mode='eval')
+    eval_loader = torch.utils.data.DataLoader(
+        dataset=eval_dataset,
         batch_size=EVAL_BATCH_SIZE,
-        shuffle=False)
+        shuffle=False,
+        pin_memory=True)
 
-    # net = torchvision.models.resnet18(pretrained=False, num_classes=NUM_CLASSES)
-    net = models.kuangliu_cifar.resnet.ResNet18(NUM_CLASSES)
-    # net = models.moit.preact_resnet.PreActResNet18(NUM_CLASSES, mode='')
+    net = torchvision.models.resnet18(pretrained=False, num_classes=num_classes)
+    # net = models.kuangliu_cifar.resnet.ResNet18(num_classes)
+    # net = models.moit.preact_resnet.PreActResNet18(num_classes, mode='')
     net.to(device)
 
     loss_fn = nn.CrossEntropyLoss()
@@ -97,7 +97,7 @@ def train(config):
         with torch.inference_mode():
             total_correct = 0
             example_count = 0
-            for i, data in enumerate(tqdm.tqdm(test_loader)):
+            for i, data in enumerate(tqdm.tqdm(eval_loader)):
                 inputs, labels = map(lambda x: x.to(device), data)
                 outputs = net(inputs)
                 preds = torch.argmax(outputs, axis=-1)
@@ -108,6 +108,75 @@ def train(config):
             logging.info('test acc: %0.4f', mean_correct)
 
         scheduler.step()
+
+
+def get_num_classes(dataset) -> int:
+    if dataset == 'imagenet':
+        return 1000
+    if dataset == 'tiny_imagenet':
+        return 200
+    if dataset == 'cifar10':
+        return 10
+    raise ValueError('unknown dataset')
+
+
+DATASET_FNS = {
+    'imagenet': torchvision.datasets.ImageNet,
+    'tiny_imagenet': datasets.TinyImageNet,
+    'cifar10': torchvision.datasets.CIFAR10,
+}
+
+
+def make_dataset(dataset, root, split, mode):
+    try:
+        dataset_fn = DATASET_FNS[dataset]
+    except KeyError:
+        raise ValueError('unknown dataset', dataset)
+
+    if dataset == 'imagenet':
+        if mode == 'train':
+            transform = transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+            ])
+        elif mode == 'eval':
+            transform = transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+            ])
+
+    elif dataset == 'tiny_imagenet':
+        if mode == 'train':
+            transform = transforms.Compose([
+                transforms.RandomCrop(56),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+            ])
+        elif mode == 'eval':
+            transform = transforms.Compose([
+                transforms.CenterCrop(56),
+                transforms.ToTensor(),
+            ])
+
+    elif 'cifar' in dataset:
+        if mode == 'train':
+            transform = transforms.Compose([
+                transforms.Pad(4),
+                transforms.RandomCrop(32),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+            ])
+        elif mode == 'eval':
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+            ])
+
+    else:
+        raise ValueError('no transform configured for dataset', dataset)
+
+    return dataset_fn(root, split, transform=transform)
 
 
 if __name__ == '__main__':
