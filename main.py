@@ -16,21 +16,7 @@ import models.moit.preact_resnet
 
 EVAL_BATCH_SIZE = 256
 
-default_config = ml_collections.ConfigDict({
-    'dataset': 'imagenet',
-    'dataset_root': '/home/jack/data/torchvision/imagenet',
-    'train_split': 'train',
-    'eval_split': 'val',
-    # Config for training algorithm.
-    'train': ml_collections.ConfigDict({
-        'batch_size': 64,
-        'num_epochs': 100,
-        'learning_rate': 0.01,
-        'momentum': 0.9,
-        'weight_decay': 0.0,
-    }),
-})
-config_flags.DEFINE_config_dict('config', default_config)
+config_flags.DEFINE_config_file('config')
 
 FLAGS = flags.FLAGS
 
