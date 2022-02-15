@@ -36,6 +36,14 @@ class Hierarchy:
     def leaf_mask(self) -> np.ndarray:
         return self.num_children() == 0
 
+    def leaf_subset(self) -> np.ndarray:
+        index, = self.leaf_mask().nonzero()
+        return index
+
+    def internal_subset(self) -> np.ndarray:
+        index, = np.logical_not(self.leaf_mask()).nonzero()
+        return index
+
     def num_leaf_nodes(self) -> int:
         return np.count_nonzero(self.leaf_mask())
 
@@ -104,20 +112,20 @@ class Hierarchy:
         return is_ancestor
 
 
-def make_hierarchy_from_name_pairs(
-        name_pairs : List[Tuple[str, str]],
-        ):
-    num_edges = len(name_pairs)
+def make_hierarchy_from_edges(
+        pairs : List[Tuple[str, str]],
+        ) -> Tuple[Hierarchy, List[str]]:
+    num_edges = len(pairs)
     num_nodes = num_edges + 1
     # Data structures to populate from list of pairs.
     parents = np.full([num_nodes], -1, dtype=int)
     names = [None] * num_nodes
     name_to_index = {}
     # Set name of root from first pair.
-    root, _ = name_pairs[0]
+    root, _ = pairs[0]
     names[0] = root
     name_to_index[root] = 0
-    for r, (u, v) in enumerate(name_pairs):
+    for r, (u, v) in enumerate(pairs):
         if v in name_to_index:
             raise ValueError('has multiple parents', v)
         i = name_to_index[u]
@@ -128,7 +136,7 @@ def make_hierarchy_from_name_pairs(
     return Hierarchy(parents), names
 
 
-def load_name_pairs(f: TextIO, delimiter=',') -> List[Tuple[str, str]]:
+def load_edges(f: TextIO, delimiter=',') -> List[Tuple[str, str]]:
     """Load from file containing (parent, node) pairs."""
     reader = csv.reader(f)
     pairs = []

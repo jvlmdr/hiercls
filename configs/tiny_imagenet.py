@@ -4,9 +4,11 @@ import ml_collections
 def get_config():
     return ml_collections.ConfigDict({
         'dataset': 'tiny_imagenet',
-        'dataset_root': '',
+        'dataset_root': '/data/manual/tiny_imagenet/',
         'train_split': 'train',
         'eval_split': 'val',
+        'hierarchy': 'tiny_imagenet_fiveai',
+        'predict': 'flat_softmax',
 
         # Config for training algorithm.
         'train': ml_collections.ConfigDict({

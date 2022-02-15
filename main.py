@@ -1,3 +1,5 @@
+import pathlib
+
 from absl import app
 from absl import flags
 from absl import logging
@@ -11,10 +13,13 @@ from torchvision import transforms
 import tqdm
 
 import datasets
+import hier
+import hier_torch
 import models.kuangliu_cifar.resnet
 import models.moit.preact_resnet
 
 EVAL_BATCH_SIZE = 256
+SOURCE_DIR = pathlib.Path(__file__).parent
 
 config_flags.DEFINE_config_file('config')
 
@@ -51,9 +56,21 @@ def train(config):
         shuffle=False,
         pin_memory=True)
 
-    net = torchvision.models.resnet18(pretrained=False, num_classes=num_classes)
-    # net = models.kuangliu_cifar.resnet.ResNet18(num_classes)
-    # net = models.moit.preact_resnet.PreActResNet18(num_classes, mode='')
+    hierarchy_file = SOURCE_DIR / f'resources/hierarchy/{config.hierarchy}.csv'
+    with open(hierarchy_file) as f:
+        edges = hier.load_edges(f)
+    tree, node_names = hier.make_hierarchy_from_edges(edges)
+
+    if config.predict == 'flat_softmax':
+        num_outputs = tree.num_leaf_nodes()  # num_classes
+    elif config.predict == 'hier_softmax':
+        num_outputs = tree.num_nodes() - 1
+    else:
+        raise ValueError('unknown predict method', config.predict)
+
+    net = torchvision.models.resnet18(pretrained=False, num_classes=num_outputs)
+    # net = models.kuangliu_cifar.resnet.ResNet18(num_outputs)
+    # net = models.moit.preact_resnet.PreActResNet18(num_outputs, mode='')
     net.to(device)
 
     loss_fn = nn.CrossEntropyLoss()
@@ -64,6 +81,8 @@ def train(config):
         weight_decay=config.train.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.train.num_epochs)
+
+    leaf_subset = torch.from_numpy(tree.leaf_subset()).to(device)
 
     for epoch in range(config.train.num_epochs):
         total_loss = 0.
@@ -85,9 +104,14 @@ def train(config):
             example_count = 0
             for i, data in enumerate(tqdm.tqdm(eval_loader)):
                 inputs, labels = map(lambda x: x.to(device), data)
-                outputs = net(inputs)
-                preds = torch.argmax(outputs, axis=-1)
-                is_correct = (preds == labels)
+                theta = net(inputs)
+                if config.predict == 'flat_softmax':
+                    prob = hier_torch.sum_leaf_descendants(tree, theta.softmax(dim=-1), dim=-1)
+                elif config.predict == 'hier_softmax':
+                    prob = hier_torch.hier_log_softmax(theta).exp()
+                pred_nodes = torch.argmax(prob, axis=-1)
+                label_nodes = torch.take(leaf_subset, labels)
+                is_correct = (pred_nodes == label_nodes)
                 total_correct += is_correct.sum().item()
                 example_count += is_correct.numel()
             mean_correct = total_correct / example_count

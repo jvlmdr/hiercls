@@ -23,7 +23,7 @@ class HierSoftmax:
             ) -> Tuple[Sequence[int], Sequence[List[int]], Sequence]:
         """Returns node, children, log_p for softmax at each internal node."""
         assert axis == -1
-        internal_nodes, = np.logical_not(self.tree.leaf_mask()).nonzero()
+        internal_nodes = self.tree.internal_subset()
         node_to_children = self.tree.children()
         node_children = [node_to_children[x] for x in internal_nodes]
         node_degree = [len(x) for x in node_children]
