@@ -1,3 +1,4 @@
+from functools import partial
 import pathlib
 
 from absl import app
@@ -63,8 +64,15 @@ def train(config):
 
     if config.predict == 'flat_softmax':
         num_outputs = tree.num_leaf_nodes()  # num_classes
+        loss_fn = nn.CrossEntropyLoss()
+        sum_leaf_descendants_fn = hier_torch.SumLeafDescendants(tree, strict=False).to(device)
+        pred_fn = lambda theta: sum_leaf_descendants_fn(theta.softmax(dim=-1), dim=-1)
     elif config.predict == 'hier_softmax':
         num_outputs = tree.num_nodes() - 1
+        loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)
+        hier_log_softmax_fn = hier_torch.HierLogSoftmax(tree).to(device)
+        # hier_log_softmax_fn = partial(hier_torch.hier_log_softmax, tree)
+        pred_fn = lambda theta: hier_log_softmax_fn(theta).exp()
     else:
         raise ValueError('unknown predict method', config.predict)
 
@@ -73,7 +81,6 @@ def train(config):
     # net = models.moit.preact_resnet.PreActResNet18(num_outputs, mode='')
     net.to(device)
 
-    loss_fn = nn.CrossEntropyLoss()
     optimizer = optim.SGD(
         net.parameters(),
         lr=config.train.learning_rate,
@@ -105,11 +112,12 @@ def train(config):
             for i, data in enumerate(tqdm.tqdm(eval_loader)):
                 inputs, labels = map(lambda x: x.to(device), data)
                 theta = net(inputs)
-                if config.predict == 'flat_softmax':
-                    prob = hier_torch.sum_leaf_descendants(tree, theta.softmax(dim=-1), dim=-1)
-                elif config.predict == 'hier_softmax':
-                    prob = hier_torch.hier_log_softmax(theta).exp()
-                pred_nodes = torch.argmax(prob, axis=-1)
+                prob = pred_fn(theta)
+                # Take min likelihood that is above 0.5.
+                inf = torch.full((), torch.inf).to(device)
+                is_leaf = torch.from_numpy(tree.leaf_mask()).to(device)
+                # pred_nodes = torch.argmin(torch.where(prob > 0.5, prob, inf), dim=-1)
+                pred_nodes = torch.argmax(torch.where(is_leaf, prob, -inf), dim=-1)
                 label_nodes = torch.take(leaf_subset, labels)
                 is_correct = (pred_nodes == label_nodes)
                 total_correct += is_correct.sum().item()
