@@ -65,14 +65,17 @@ def train(config):
     if config.predict == 'flat_softmax':
         num_outputs = tree.num_leaf_nodes()  # num_classes
         loss_fn = nn.CrossEntropyLoss()
-        sum_leaf_descendants_fn = hier_torch.SumLeafDescendants(tree, strict=False).to(device)
-        pred_fn = lambda theta: sum_leaf_descendants_fn(theta.softmax(dim=-1), dim=-1)
+        pred_fn = partial(
+            lambda sum_fn, theta: sum_fn(theta.softmax(dim=-1), dim=-1),
+            hier_torch.SumLeafDescendants(tree, strict=False).to(device))
     elif config.predict == 'hier_softmax':
         num_outputs = tree.num_nodes() - 1
-        loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)
-        hier_log_softmax_fn = hier_torch.HierLogSoftmax(tree).to(device)
-        # hier_log_softmax_fn = partial(hier_torch.hier_log_softmax, tree)
-        pred_fn = lambda theta: hier_log_softmax_fn(theta).exp()
+        # loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)
+        loss_fn = hier_torch.HierSoftmaxNLL(tree, with_leaf_targets=True).to(device)
+        pred_fn = partial(
+            lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
+            # partial(hier_torch.hier_log_softmax, tree)
+            hier_torch.HierLogSoftmax(tree).to(device))
     else:
         raise ValueError('unknown predict method', config.predict)
 

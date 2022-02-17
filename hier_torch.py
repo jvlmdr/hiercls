@@ -21,42 +21,83 @@ def hier_softmax_nll_with_leaf(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         target: torch.Tensor) -> torch.Tensor:
-    leaf_subset = torch.from_numpy(tree.leaf_subset()).to(scores.device)
+    device = scores.device
+    leaf_subset = torch.from_numpy(tree.leaf_subset()).to(device)
+    # TODO: Could make this faster by only computing likelihood for targets.
     log_prob = hier_log_softmax(tree, scores, dim=-1)
     leaf_log_prob = torch.index_select(log_prob, -1, leaf_subset)
     nll = -torch.gather(leaf_log_prob, -1, target.unsqueeze(-1)).squeeze(-1)
     return torch.mean(nll)
 
 
-# class HierSoftmaxNLL(nn.Module):
-#
-#     def __init__(self, tree):
-#         super().__init__()
-#         self.tree = tree
-#
-#     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-#         """Target is node index."""
-#         pass
+class HierSoftmaxNLL(nn.Module):
+    """Avoids recomputation in hier_softmax_nll."""
+
+    def __init__(self, tree, with_leaf_targets=False):
+        super().__init__()
+        if with_leaf_targets:
+            self.label_order = torch.from_numpy(tree.leaf_subset())
+        else:
+            self.label_order = None
+        self.hier_log_softmax = HierLogSoftmax(tree)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        # Do not apply fn to label_order because it might convert dtype.
+        self.hier_log_softmax = self.hier_log_softmax._apply(fn)
+        return self
+
+    @property
+    def device(self) -> torch.device:
+        return self.hier_log_softmax.device
+
+    def forward(self, scores, target):
+        # TODO: Could make this faster by only computing likelihood for targets.
+        device = self.device
+        log_prob = self.hier_log_softmax(scores, dim=-1)
+        if self.label_order is not None:
+            log_prob = torch.index_select(log_prob, -1, self.label_order.to(device))
+        nll = -torch.gather(log_prob, -1, target.unsqueeze(-1)).squeeze(-1)
+        return torch.mean(nll)
 
 
 def hier_log_softmax(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         dim: int = -1) -> torch.Tensor:
-    internal_nodes = tree.internal_subset()
+    # Split scores into softmax for each internal node over its children.
+    # Convert from [s[0], s[1], ..., s[n-1]]
+    # to [[s[0], ..., s[k-1], -inf, -inf, ...],
+    #     ...
+    #     [..., s[n-1], -inf, -inf, ...]].
+    # Use index_copy with flat_index, then reshape and compute log_softmax.
+    # Then re-flatten and use index_select with flat_index.
+    # This is faster than using torch.split() and map(log_softmax, ...).
+    # Finally, take sum over ancestor conditionals to obtain likelihoods.
+    assert dim == -1 or dim == scores.ndim - 1
+    num_internal = tree.num_internal_nodes()
     node_to_children = tree.children()
-    cond_children = [node_to_children[x] for x in internal_nodes]
-    cond_sizes = [len(x) for x in cond_children]
-    cond_scores = scores.split(cond_sizes, dim=dim)
-    cond_log_softmax = [x.log_softmax(dim=dim) for x in cond_scores]
-    shape = list(scores.shape)
-    shape[dim] = tree.num_nodes()
-    log_cond_prob = torch.zeros(shape, device=scores.device).index_add(
-        dim,
-        torch.from_numpy(np.concatenate(cond_children)).to(scores.device),
-        torch.cat(cond_log_softmax, dim=dim))
-    log_prob = sum_ancestors(tree, log_cond_prob, dim=dim, strict=False)
-    return log_prob
+    cond_num_children = [len(node_to_children[x]) for x in tree.internal_subset()]
+    max_num_children = max(cond_num_children)
+    row_index = np.concatenate([np.full(n, i) for i, n in enumerate(cond_num_children)])
+    col_index = np.concatenate([np.arange(n) for n in cond_num_children])
+    flat_index = row_index * max_num_children + col_index
+    sum_ancestors_fn = SumAncestors(tree, exclude_root=True)
+
+    device = scores.device
+    flat_index = torch.from_numpy(flat_index).to(device)
+    input_shape = list(scores.shape)
+    flat_shape = [*input_shape[:-1], num_internal * max_num_children]
+    # Pad with -inf for log_softmax.
+    flat = torch.full(flat_shape, -torch.inf, device=device)
+    flat.index_copy_(-1, flat_index, scores)
+    split_shape = [*input_shape[:-1], num_internal, max_num_children]
+    child_scores = flat.reshape(split_shape)
+    child_log_p = torch.log_softmax(child_scores, dim=-1)
+    child_log_p = child_log_p.reshape(flat_shape)
+    log_cond_p = child_log_p.index_select(-1, flat_index)
+    sum_ancestors_fn = sum_ancestors_fn.to(device)
+    return sum_ancestors_fn(log_cond_p, dim=-1)
 
 
 class HierLogSoftmax(nn.Module):
@@ -64,29 +105,45 @@ class HierLogSoftmax(nn.Module):
 
     def __init__(self, tree: hier.Hierarchy):
         super().__init__()
-        internal_nodes = tree.internal_subset()
+        num_internal = tree.num_internal_nodes()
         node_to_children = tree.children()
-        cond_children = [node_to_children[x] for x in internal_nodes]
-        cond_sizes = [len(x) for x in cond_children]
-        cat_cond_children = torch.from_numpy(np.concatenate(cond_children))
+        cond_num_children = [len(node_to_children[x]) for x in tree.internal_subset()]
+        max_num_children = max(cond_num_children)
+        row_index = np.concatenate([np.full(n, i) for i, n in enumerate(cond_num_children)])
+        col_index = np.concatenate([np.arange(n) for n in cond_num_children])
+        flat_index = torch.from_numpy(row_index * max_num_children + col_index)
+        sum_ancestors_fn = SumAncestors(tree, exclude_root=True)
 
-        self.cond_sizes = cond_sizes
-        self.num_nodes = tree.num_nodes()
-        # self.cat_cond_children = cat_cond_children
-        self.register_buffer('cat_cond_children', cat_cond_children)
-        self.cat_cond_children: Optional[torch.Tensor]
-        self.sum_ancestors = SumAncestors(tree, strict=False)
+        self.num_internal = num_internal
+        self.max_num_children = max_num_children
+        self.flat_index = flat_index
+        self.sum_ancestors_fn = SumAncestors(tree, exclude_root=True)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        # Do not apply fn to flat_index because it might convert dtype.
+        self.sum_ancestors_fn = self.sum_ancestors_fn._apply(fn)
+        return self
+
+    @property
+    def device(self) -> torch.device:
+        return self.sum_ancestors_fn.device
 
     def forward(self, scores: torch.Tensor, dim: int = -1) -> torch.Tensor:
-        device = scores.device
-        cond_scores = scores.split(self.cond_sizes, dim=dim)
-        cond_log_softmax = [x.log_softmax(dim=dim) for x in cond_scores]
-        shape = list(scores.shape)
-        shape[dim] = self.num_nodes
-        log_cond_prob = torch.zeros(shape, device=device).index_add(
-            dim, self.cat_cond_children, torch.cat(cond_log_softmax, dim=dim))
-        log_prob = self.sum_ancestors(log_cond_prob, dim=dim)
-        return log_prob
+        assert dim == -1 or dim == scores.ndim - 1
+        device = self.device
+        input_shape = list(scores.shape)
+        flat_shape = [*input_shape[:-1], self.num_internal * self.max_num_children]
+        # Pad with -inf for log_softmax.
+        flat = torch.full(flat_shape, -torch.inf, device=device)
+        flat_index = self.flat_index.to(device)
+        flat.index_copy_(-1, flat_index, scores)
+        split_shape = [*input_shape[:-1], self.num_internal, self.max_num_children]
+        child_scores = flat.reshape(split_shape)
+        child_log_p = torch.log_softmax(child_scores, dim=-1)
+        child_log_p = child_log_p.reshape(flat_shape)
+        log_cond_p = child_log_p.index_select(-1, flat_index)
+        return self.sum_ancestors_fn(log_cond_p, dim=-1)
 
 
 def leaf_embed(
@@ -107,8 +164,8 @@ def leaf_add(
         dim: int = -1) -> torch.Tensor:
     """Adds values for leaf nodes to values for all nodes."""
     device = node_values.device
-    leaf_index = torch.from_numpy(tree.leaf_subset())
-    return node_values.index_add(dim, leaf_index.to(device), leaf_values)
+    leaf_index = torch.from_numpy(tree.leaf_subset()).to(device)
+    return node_values.index_add(dim, leaf_index, leaf_values)
 
 
 def sum_leaf_descendants(
@@ -178,22 +235,31 @@ class Sum(nn.Module):
     def __init__(
             self,
             tree: hier.Hierarchy,
-            leaf: bool,
             transpose: bool,
+            leaf_only: bool = False,
+            exclude_root: bool = False,
             strict: bool = False):
         super().__init__()
-
-        # The value is_ancestor[i, j] is true if i is an ancestor of j.
+        # The value matrix[i, j] is true if i is an ancestor of j.
+        # Take transpose for sum over descendants.
         matrix = tree.ancestor_mask(strict=strict)
-        if leaf:
+        if leaf_only:
             matrix = matrix[:, tree.leaf_mask()]
+        if exclude_root:
+            matrix = matrix[1:, :]
         if transpose:
             matrix = matrix.T
         matrix = torch.from_numpy(matrix).type(torch.get_default_dtype())
+        self.matrix = matrix
 
-        # self.matrix = matrix
-        self.register_buffer('matrix', matrix)
-        self.matrix: Optional[torch.Tensor]
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.matrix = fn(self.matrix)
+        return self
+
+    @property
+    def device(self) -> torch.device:
+        return self.matrix.device
 
     def forward(self, values: torch.Tensor, dim: int = -1) -> torch.Tensor:
         # TODO: Re-order dimensions to make this work with dim != -1.
@@ -201,7 +267,7 @@ class Sum(nn.Module):
         return torch.tensordot(values, self.matrix, dims=1)
 
 
-SumAncestors = partial(Sum, leaf=False, transpose=False)
-SumLeafAncestors = partial(Sum, leaf=False, transpose=True)
-SumDescendants = partial(Sum, leaf=False, transpose=True)
-SumLeafDescendants = partial(Sum, leaf=True, transpose=True)
+SumAncestors = partial(Sum, transpose=False, leaf_only=False)
+SumLeafAncestors = partial(Sum, transpose=True, leaf_only=True)
+SumDescendants = partial(Sum, transpose=True, leaf_only=False)
+SumLeafDescendants = partial(Sum, transpose=True, leaf_only=True)
