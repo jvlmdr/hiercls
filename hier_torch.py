@@ -43,7 +43,7 @@ class HierSoftmaxNLL(nn.Module):
 
     def _apply(self, fn):
         super()._apply(fn)
-        # Do not apply fn to label_order because it might convert dtype.
+        # Do not apply fn to indices because it might convert dtype.
         self.hier_log_softmax = self.hier_log_softmax._apply(fn)
         return self
 
@@ -75,28 +75,36 @@ def hier_log_softmax(
     # This is faster than using torch.split() and map(log_softmax, ...).
     # Finally, take sum over ancestor conditionals to obtain likelihoods.
     assert dim == -1 or dim == scores.ndim - 1
+    num_nodes = tree.num_nodes()
     num_internal = tree.num_internal_nodes()
     node_to_children = tree.children()
-    cond_num_children = [len(node_to_children[x]) for x in tree.internal_subset()]
+    cond_children = [node_to_children[x] for x in tree.internal_subset()]
+    cond_num_children = list(map(len, cond_children))
     max_num_children = max(cond_num_children)
     row_index = np.concatenate([np.full(n, i) for i, n in enumerate(cond_num_children)])
     col_index = np.concatenate([np.arange(n) for n in cond_num_children])
     flat_index = row_index * max_num_children + col_index
-    sum_ancestors_fn = SumAncestors(tree, exclude_root=True)
+    child_index = np.concatenate(cond_children)
+    sum_ancestors_fn = SumAncestors(tree, exclude_root=False)
 
     device = scores.device
     flat_index = torch.from_numpy(flat_index).to(device)
+    child_index = torch.from_numpy(child_index).to(device)
+    sum_ancestors_fn = sum_ancestors_fn.to(device)
     input_shape = list(scores.shape)
     flat_shape = [*input_shape[:-1], num_internal * max_num_children]
     # Pad with -inf for log_softmax.
-    flat = torch.full(flat_shape, -torch.inf, device=device)
-    flat.index_copy_(-1, flat_index, scores)
+    # flat[..., flat_index] = scores
+    flat = torch.full(flat_shape, -torch.inf, device=device).index_copy_(
+        -1, flat_index, scores)
     split_shape = [*input_shape[:-1], num_internal, max_num_children]
     child_scores = flat.reshape(split_shape)
     child_log_p = torch.log_softmax(child_scores, dim=-1)
     child_log_p = child_log_p.reshape(flat_shape)
-    log_cond_p = child_log_p.index_select(-1, flat_index)
-    sum_ancestors_fn = sum_ancestors_fn.to(device)
+    output_shape = [*input_shape[:-1], num_nodes]
+    # log_cond_p[..., child_index] = child_log_p[..., flat_index]
+    log_cond_p = torch.zeros(output_shape, device=device).index_copy_(
+        -1, child_index, child_log_p.index_select(-1, flat_index))
     return sum_ancestors_fn(log_cond_p, dim=-1)
 
 
@@ -105,23 +113,28 @@ class HierLogSoftmax(nn.Module):
 
     def __init__(self, tree: hier.Hierarchy):
         super().__init__()
+        num_nodes = tree.num_nodes()
         num_internal = tree.num_internal_nodes()
         node_to_children = tree.children()
-        cond_num_children = [len(node_to_children[x]) for x in tree.internal_subset()]
+        cond_children = [node_to_children[x] for x in tree.internal_subset()]
+        cond_num_children = list(map(len, cond_children))
         max_num_children = max(cond_num_children)
         row_index = np.concatenate([np.full(n, i) for i, n in enumerate(cond_num_children)])
         col_index = np.concatenate([np.arange(n) for n in cond_num_children])
         flat_index = torch.from_numpy(row_index * max_num_children + col_index)
-        sum_ancestors_fn = SumAncestors(tree, exclude_root=True)
+        child_index = torch.from_numpy(np.concatenate(cond_children))
+        sum_ancestors_fn = SumAncestors(tree, exclude_root=False)
 
+        self.num_nodes = num_nodes
         self.num_internal = num_internal
         self.max_num_children = max_num_children
         self.flat_index = flat_index
-        self.sum_ancestors_fn = SumAncestors(tree, exclude_root=True)
+        self.child_index = child_index
+        self.sum_ancestors_fn = sum_ancestors_fn
 
     def _apply(self, fn):
         super()._apply(fn)
-        # Do not apply fn to flat_index because it might convert dtype.
+        # Do not apply fn to indices because it might convert dtype.
         self.sum_ancestors_fn = self.sum_ancestors_fn._apply(fn)
         return self
 
@@ -135,14 +148,19 @@ class HierLogSoftmax(nn.Module):
         input_shape = list(scores.shape)
         flat_shape = [*input_shape[:-1], self.num_internal * self.max_num_children]
         # Pad with -inf for log_softmax.
-        flat = torch.full(flat_shape, -torch.inf, device=device)
         flat_index = self.flat_index.to(device)
-        flat.index_copy_(-1, flat_index, scores)
+        # flat[..., flat_index] = scores
+        flat = torch.full(flat_shape, -torch.inf, device=device).index_copy_(
+            -1, flat_index, scores)
         split_shape = [*input_shape[:-1], self.num_internal, self.max_num_children]
         child_scores = flat.reshape(split_shape)
         child_log_p = torch.log_softmax(child_scores, dim=-1)
         child_log_p = child_log_p.reshape(flat_shape)
-        log_cond_p = child_log_p.index_select(-1, flat_index)
+        output_shape = [*input_shape[:-1], self.num_nodes]
+        child_index = self.child_index.to(device)
+        # log_cond_p[..., child_index] = child_log_p[..., flat_index]
+        log_cond_p = torch.zeros(output_shape, device=device).index_copy_(
+            -1, child_index, child_log_p.index_select(-1, flat_index))
         return self.sum_ancestors_fn(log_cond_p, dim=-1)
 
 
