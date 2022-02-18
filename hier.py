@@ -226,15 +226,3 @@ def lca(tree: Hierarchy, inds_a: np.ndarray, inds_b: np.ndarray) -> np.ndarray:
         ((paths_a == paths_b) & (paths_a >= 0) & (paths_b >= 0)),
         axis=-1)
     return paths[inds_a, num_common - 1]
-
-
-# def argmax_leaf(tree: Hierarchy, prob: np.ndarray, axis: int = -1) -> np.ndarray:
-#     return np.nanargmax(np.where(tree.leaf_mask(), prob, np.nan), axis=axis)
-#
-#
-# def argmin_above_threshold(
-#         tree: Hierarchy,
-#         prob: np.ndarray,
-#         threshold: float = 0.5,
-#         axis: int = -1) -> np.ndarray:
-#     return np.nanargmin(np.where(prob > threshold, prob, np.nan), axis=axis)

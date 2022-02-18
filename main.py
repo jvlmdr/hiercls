@@ -1,11 +1,13 @@
 from functools import partial
 import pathlib
+import pprint
 
 from absl import app
 from absl import flags
 from absl import logging
 import ml_collections
 from ml_collections import config_flags
+import numpy as np
 import torch
 from torch import _pin_memory, nn
 from torch import optim
@@ -16,6 +18,7 @@ import tqdm
 import datasets
 import hier
 import hier_torch
+import metrics
 import models.kuangliu_cifar.resnet
 import models.moit.preact_resnet
 
@@ -92,8 +95,6 @@ def train(config):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.train.num_epochs)
 
-    leaf_subset = torch.from_numpy(tree.leaf_subset()).to(device)
-
     for epoch in range(config.train.num_epochs):
         total_loss = 0.
         step_count = 0
@@ -110,25 +111,59 @@ def train(config):
         logging.info('mean train loss:%11.4e', mean_loss)
 
         with torch.inference_mode():
-            total_correct = 0
+            totals = {
+                method: {
+                    'exact': 0,
+                    'correct': 0,
+                    'excess_info': 0,
+                    'deficient_info': 0,
+                    'excess_depth': 0,
+                    'deficient_depth': 0,
+                    'edge_dist': 0,
+                } for method in ['leaf', 'threshold']
+            }
             example_count = 0
+            leaf_nodes = tree.leaf_subset()
             for i, data in enumerate(tqdm.tqdm(eval_loader)):
-                inputs, labels = map(lambda x: x.to(device), data)
+                # inputs, labels = map(lambda x: x.to(device), data)
+                inputs, labels = data
+                inputs = inputs.to(device)
                 theta = net(inputs)
-                prob = pred_fn(theta)
-                # Take min likelihood that is above 0.5.
-                inf = torch.full((), torch.inf).to(device)
-                is_leaf = torch.from_numpy(tree.leaf_mask()).to(device)
-                # pred_nodes = torch.argmin(torch.where(prob > 0.5, prob, inf), dim=-1)
-                pred_nodes = torch.argmax(torch.where(is_leaf, prob, -inf), dim=-1)
-                label_nodes = torch.take(leaf_subset, labels)
-                is_correct = (pred_nodes == label_nodes)
-                total_correct += is_correct.sum().item()
-                example_count += is_correct.numel()
-            mean_correct = total_correct / example_count
-            logging.info('test acc: %0.4f', mean_correct)
+                prob = pred_fn(theta).cpu().numpy()
+                preds = {}
+                preds['leaf'] = argmax_leaf(tree, prob)
+                preds['threshold'] = argmax_value_with_threshold(tree, tree.depths(), prob)
+                gt = leaf_nodes[labels]
+                for method, pr in preds.items():
+                    totals[method]['exact'] += (pr == gt).sum()
+                    totals[method]['correct'] += metrics.correct(tree, gt, pr).sum()
+                    totals[method]['excess_info'] += metrics.excess_info(tree, gt, pr).sum()
+                    totals[method]['deficient_info'] += metrics.deficient_info(tree, gt, pr).sum()
+                    totals[method]['excess_depth'] += metrics.excess_depth(tree, gt, pr).sum()
+                    totals[method]['deficient_depth'] += metrics.deficient_depth(tree, gt, pr).sum()
+                    totals[method]['edge_dist'] += metrics.edge_dist(tree, gt, pr).sum()
+                example_count += len(labels)
+            means = {method: {field: totals[method][field] / example_count
+                              for field in totals[method]} for method in preds}
+            pprint.pprint(means)
+            # mean_exact = total_exact / example_count
+            # logging.info('test acc: %0.4f', mean_exact)
 
         scheduler.step()
+
+
+def argmax_leaf(tree: hier.Hierarchy, prob: np.ndarray, axis: int = -1) -> np.ndarray:
+    return np.nanargmax(np.where(tree.leaf_mask(), prob, np.nan), axis=axis)
+
+
+def argmax_value_with_threshold(
+        tree: hier.Hierarchy,
+        value: np.ndarray,
+        prob: np.ndarray,
+        threshold: float = 0.5,
+        axis: int = -1) -> np.ndarray:
+    assert axis == -1
+    return np.nanargmax(np.where(prob > threshold, value, np.nan), axis=-1)
 
 
 def get_num_classes(dataset) -> int:
