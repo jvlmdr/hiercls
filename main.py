@@ -115,10 +115,10 @@ def train(config):
                 method: {
                     'exact': 0,
                     'correct': 0,
-                    'excess_info': 0,
-                    'deficient_info': 0,
-                    'excess_depth': 0,
-                    'deficient_depth': 0,
+                    'info_excess': 0,
+                    'info_deficient': 0,
+                    'depth_excess': 0,
+                    'depth_deficient': 0,
                     'edge_dist': 0,
                 } for method in ['leaf', 'threshold']
             }
@@ -137,10 +137,10 @@ def train(config):
                 for method, pr in preds.items():
                     totals[method]['exact'] += (pr == gt).sum()
                     totals[method]['correct'] += metrics.correct(tree, gt, pr).sum()
-                    totals[method]['excess_info'] += metrics.excess_info(tree, gt, pr).sum()
-                    totals[method]['deficient_info'] += metrics.deficient_info(tree, gt, pr).sum()
-                    totals[method]['excess_depth'] += metrics.excess_depth(tree, gt, pr).sum()
-                    totals[method]['deficient_depth'] += metrics.deficient_depth(tree, gt, pr).sum()
+                    totals[method]['info_excess'] += metrics.excess_info(tree, gt, pr).sum()
+                    totals[method]['info_deficient'] += metrics.deficient_info(tree, gt, pr).sum()
+                    totals[method]['depth_excess'] += metrics.excess_depth(tree, gt, pr).sum()
+                    totals[method]['depth_deficient'] += metrics.deficient_depth(tree, gt, pr).sum()
                     totals[method]['edge_dist'] += metrics.edge_dist(tree, gt, pr).sum()
                 example_count += len(labels)
             means = {method: {field: totals[method][field] / example_count
