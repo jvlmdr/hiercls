@@ -33,7 +33,7 @@ def hier_softmax_nll_with_leaf(
 class HierSoftmaxNLL(nn.Module):
     """Avoids recomputation in hier_softmax_nll."""
 
-    def __init__(self, tree, with_leaf_targets=False):
+    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False):
         super().__init__()
         if with_leaf_targets:
             self.label_order = torch.from_numpy(tree.leaf_subset())
@@ -51,7 +51,7 @@ class HierSoftmaxNLL(nn.Module):
     def device(self) -> torch.device:
         return self.hier_log_softmax.device
 
-    def forward(self, scores, target):
+    def forward(self, scores: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         # TODO: Could make this faster by only computing likelihood for targets.
         device = self.device
         log_prob = self.hier_log_softmax(scores, dim=-1)
@@ -289,3 +289,46 @@ SumAncestors = partial(Sum, transpose=False, leaf_only=False)
 SumLeafAncestors = partial(Sum, transpose=True, leaf_only=True)
 SumDescendants = partial(Sum, transpose=True, leaf_only=False)
 SumLeafDescendants = partial(Sum, transpose=True, leaf_only=True)
+
+
+class MultiLabelNLL(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False):
+        super().__init__()
+        # The boolean array binary_labels[i, :] indicates whether
+        # each node is an ancestor of node i (including i itself).
+        # The root node is excluded since it is always positive.
+        binary_labels = tree.ancestor_mask(strict=False).T[:, 1:]
+        if with_leaf_targets:
+            binary_labels = binary_labels[tree.leaf_subset(), :]
+
+        dtype = torch.get_default_dtype()
+        self.binary_labels = torch.from_numpy(binary_labels).type(dtype)
+        self.bce_loss = torch.nn.BCEWithLogitsLoss()
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.binary_labels = fn(self.binary_labels)
+        self.bce_loss = self.bce_loss._apply(fn)
+        return self
+
+    @property
+    def device(self) -> torch.device:
+        return self.binary_labels.device
+
+    def forward(self, scores: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self.bce_loss(scores,
+                             torch.index_select(self.binary_labels, 0, target))
+
+
+def multilabel_likelihood(tree: hier.Hierarchy, scores: torch.Tensor, dim=-1):
+    return torch.exp(multilabel_log_likelihood(tree, scores, dim=dim))
+
+
+def multilabel_log_likelihood(tree: hier.Hierarchy, scores: torch.Tensor, dim=-1):
+    assert scores.shape[dim] == tree.num_nodes() - 1
+    assert dim == -1
+    shape = list(scores.shape)
+    shape[-1] = 1
+    zero = torch.zeros(shape, dtype=scores.dtype, device=scores.device)
+    return torch.cat([zero, nn.functional.logsigmoid(scores)], dim=-1)

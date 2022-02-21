@@ -79,6 +79,10 @@ def train(config):
             lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
             # partial(hier_torch.hier_log_softmax, tree)
             hier_torch.HierLogSoftmax(tree).to(device))
+    if config.predict == 'multilabel':
+        num_outputs = tree.num_nodes() - 1
+        loss_fn = hier_torch.MultiLabelNLL(tree, with_leaf_targets=True).to(device)
+        pred_fn = partial(hier_torch.multilabel_likelihood, tree)
     else:
         raise ValueError('unknown predict method', config.predict)
 
