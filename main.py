@@ -30,6 +30,17 @@ config_flags.DEFINE_config_file('config')
 FLAGS = flags.FLAGS
 
 
+METRIC_FNS = {
+    'exact': lambda _, gt, pr: pr == gt,
+    'correct': metrics.correct,
+    'info_excess': metrics.excess_info,
+    'info_deficient': metrics.deficient_info,
+    'depth_excess': metrics.excess_depth,
+    'depth_deficient': metrics.deficient_depth,
+    'depth_dist': metrics.edge_dist,
+}
+
+
 def main(_):
     train(FLAGS.config)
 
@@ -79,7 +90,7 @@ def train(config):
             lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
             # partial(hier_torch.hier_log_softmax, tree)
             hier_torch.HierLogSoftmax(tree).to(device))
-    if config.predict == 'multilabel':
+    elif config.predict == 'multilabel':
         num_outputs = tree.num_nodes() - 1
         loss_fn = hier_torch.MultiLabelNLL(tree, with_leaf_targets=True).to(device)
         pred_fn = partial(hier_torch.multilabel_likelihood, tree)
@@ -99,6 +110,19 @@ def train(config):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.train.num_epochs)
 
+    info_metric = metrics.InfoMetric(tree)
+    depth_metric = metrics.DepthMetric(tree)
+    metric_fns = {
+        'exact': lambda gt, pr: pr == gt,
+        'correct': metrics.IsCorrect(tree),
+        'info_excess': info_metric.excess,
+        'info_deficient': info_metric.deficient,
+        'info_dist': info_metric.dist,
+        'depth_excess': depth_metric.excess,
+        'depth_deficient': depth_metric.deficient,
+        'depth_dist': depth_metric.dist,
+    }
+
     for epoch in range(config.train.num_epochs):
         total_loss = 0.
         step_count = 0
@@ -114,46 +138,73 @@ def train(config):
         mean_loss = total_loss / step_count
         logging.info('mean train loss:%11.4e', mean_loss)
 
+        example_count = 0
+        metric_totals = {method: {field: 0 for field in metric_fns}
+                         for method in ['leaf', 'threshold']}
+        max_leaf_scores = []
+        prob_ranges = []
+        metric_ranges = {field: [] for field in metric_fns}
+
+        leaf_nodes = tree.leaf_subset()
+        depths = tree.depths()
+
         with torch.inference_mode():
-            totals = {
-                method: {
-                    'exact': 0,
-                    'correct': 0,
-                    'info_excess': 0,
-                    'info_deficient': 0,
-                    'depth_excess': 0,
-                    'depth_deficient': 0,
-                    'edge_dist': 0,
-                } for method in ['leaf', 'threshold']
-            }
-            example_count = 0
-            leaf_nodes = tree.leaf_subset()
             for i, data in enumerate(tqdm.tqdm(eval_loader)):
                 # inputs, labels = map(lambda x: x.to(device), data)
                 inputs, labels = data
+                n = len(labels)
                 inputs = inputs.to(device)
                 theta = net(inputs)
                 prob = pred_fn(theta).cpu().numpy()
                 preds = {}
                 preds['leaf'] = argmax_leaf(tree, prob)
-                preds['threshold'] = argmax_value_with_threshold(tree, tree.depths(), prob)
+                preds['threshold'] = argmax_value_with_threshold(tree, depths, prob, threshold=0.5)
                 gt = leaf_nodes[labels]
+
+                example_count += n
                 for method, pr in preds.items():
-                    totals[method]['exact'] += (pr == gt).sum()
-                    totals[method]['correct'] += metrics.correct(tree, gt, pr).sum()
-                    totals[method]['info_excess'] += metrics.excess_info(tree, gt, pr).sum()
-                    totals[method]['info_deficient'] += metrics.deficient_info(tree, gt, pr).sum()
-                    totals[method]['depth_excess'] += metrics.excess_depth(tree, gt, pr).sum()
-                    totals[method]['depth_deficient'] += metrics.deficient_depth(tree, gt, pr).sum()
-                    totals[method]['edge_dist'] += metrics.edge_dist(tree, gt, pr).sum()
-                example_count += len(labels)
-            means = {method: {field: totals[method][field] / example_count
-                              for field in totals[method]} for method in preds}
-            pprint.pprint(means)
-            # mean_exact = total_exact / example_count
-            # logging.info('test acc: %0.4f', mean_exact)
+                    for field in metric_fns:
+                        metric_fn = metric_fns[field]
+                        metric_totals[method][field] += metric_fn(gt, pr).sum()
+                max_leaf_scores.extend(prob[np.arange(n), preds['leaf']])
+
+                pred_range = [sorted_above_threshold(p, threshold=0.5) for p in prob]
+                # TODO: Could vectorize if necessary.
+                prob_ranges.extend([prob[i, pred_i] for i, pred_i in enumerate(pred_range)])
+                for field in metric_fns:
+                    metric_fn = metric_fns[field]
+                    # TODO: Could vectorize if necessary.
+                    # TODO: Could avoid recomputation of LCA for each metric.
+                    metric_ranges[field].extend([metric_fn(gt[i], pred_range[i]) for i in range(n)])
+
+            quartiles = np.quantile(max_leaf_scores, np.arange(4 + 1) / 4)
+            print('leaf node score quartiles:', ', '.join(map('{:.3f}'.format, quartiles)))
+            metric_means = {
+                method: {field: metric_totals[method][field] / example_count
+                         for field in metric_totals[method]}
+                for method in preds}
+            pprint.pprint(metric_means)
+
+            step_scores = np.concatenate([seq[1:] for seq in prob_ranges])
+            print('number of operating points:', len(step_scores))
+            step_order = np.argsort(-step_scores)
+            step_scores = step_scores[step_order]
+            total_init = {}
+            total_deltas = {}
+            for field in metric_fns:
+                metric_seqs = metric_ranges[field]
+                metric_seqs = [seq.astype(float) for seq in metric_seqs]
+                total_init[field] = np.asarray([seq[0] for seq in metric_seqs]).sum()
+                total_deltas[field] = np.concatenate([np.diff(seq) for seq in metric_seqs])[step_order]
 
         scheduler.step()
+
+
+def sorted_above_threshold(p: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+    assert p.ndim == 1
+    subset, = np.nonzero(p > threshold)
+    order = np.argsort(-p[subset])
+    return subset[order]
 
 
 def argmax_leaf(tree: hier.Hierarchy, prob: np.ndarray, axis: int = -1) -> np.ndarray:

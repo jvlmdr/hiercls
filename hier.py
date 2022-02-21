@@ -226,3 +226,18 @@ def lca(tree: Hierarchy, inds_a: np.ndarray, inds_b: np.ndarray) -> np.ndarray:
         ((paths_a == paths_b) & (paths_a >= 0) & (paths_b >= 0)),
         axis=-1)
     return paths[inds_a, num_common - 1]
+
+
+class FindLCA:
+
+    def __init__(self, tree: Hierarchy):
+        self.paths = tree.paths_padded(exclude_root=False)
+
+    def __call__(self, inds_a: np.ndarray, inds_b: np.ndarray) -> np.ndarray:
+        paths = self.paths
+        paths_a = paths[inds_a]
+        paths_b = paths[inds_b]
+        num_common = np.count_nonzero(
+            ((paths_a == paths_b) & (paths_a >= 0) & (paths_b >= 0)),
+            axis=-1)
+        return paths[inds_a, num_common - 1]
