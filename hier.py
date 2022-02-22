@@ -241,3 +241,8 @@ class FindLCA:
             ((paths_a == paths_b) & (paths_a >= 0) & (paths_b >= 0)),
             axis=-1)
         return paths[inds_a, num_common - 1]
+
+
+def truncate_given_lca(gt: np.ndarray, pr: np.ndarray, lca: np.ndarray) -> np.ndarray:
+    """Truncates the prediction if a descendant of the ground-truth."""
+    return np.where(gt == lca, gt, pr)

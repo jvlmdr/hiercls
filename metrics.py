@@ -84,6 +84,10 @@ class LCAMetric:
         self.value = value
         self.find_lca = hier.FindLCA(tree)
 
+    def at(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
+        lca = self.find_lca(gt, pr)
+        return self.value[lca]
+
     def excess(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
         lca = self.find_lca(gt, pr)
         return self.value[pr] - self.value[lca]
@@ -99,7 +103,7 @@ class LCAMetric:
         return excess + deficient
 
 
-def InfoMetric(tree: hier.Hierarchy) -> LCAMetric:
+def UniformLeafInfoMetric(tree: hier.Hierarchy) -> LCAMetric:
     info = -np.log(hier.uniform_leaf(tree))
     return LCAMetric(tree, info)
 
