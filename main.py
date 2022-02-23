@@ -2,6 +2,7 @@ from functools import partial
 import json
 import pathlib
 import pickle
+import pprint
 from typing import Optional, Tuple
 
 from absl import app
@@ -29,13 +30,16 @@ EVAL_BATCH_SIZE = 256
 SOURCE_DIR = pathlib.Path(__file__).parent
 SAVE_FREQ_EPOCHS = 10
 EVAL_FREQ_EPOCHS = 1
-TENSBOARD_FLUSH_SECS = 5
+LOADER_NUM_WORKERS = 16
+LOADER_PREFETCH_FACTOR = 2
+TENSORBOARD_FLUSH_SECS = 5
 
 PREDICT_METHODS = ['leaf', 'majority']
 
 config_flags.DEFINE_config_file('config')
 flags.DEFINE_string('experiment_dir', None,
                     'Where to write experiment data.')
+flags.DEFINE_bool('resume', False, 'Resume from previous checkpoint.')
 
 FLAGS = flags.FLAGS
 
@@ -134,12 +138,14 @@ def main(_):
     config = FLAGS.config
     experiment_dir = FLAGS.experiment_dir
 
-    if experiment_dir is None:
+    if not experiment_dir:
         logging.warning('no experiment_dir; not saving experiment data')
     else:
         # Ensure that experiment directory exists.
         # TODO: Check experiment_dir.exists() xor FLAGS.resume.
-        experiment_dir = pathlib.Path(FLAGS.experiment_dir)
+        experiment_dir = pathlib.Path(FLAGS.experiment_dir).absolute()
+        if experiment_dir.exists() and not FLAGS.resume:
+            raise ValueError('dir exists but resume is not set', str(experiment_dir))
         logging.info('write experiment data to: %s', str(experiment_dir))
         experiment_dir.mkdir(parents=True, exist_ok=True)
         # Dump config to file for future reference.
@@ -163,7 +169,9 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         dataset=train_dataset,
         batch_size=config.train.batch_size,
         shuffle=True,
-        pin_memory=True)
+        pin_memory=True,
+        num_workers=LOADER_NUM_WORKERS,
+        prefetch_factor=LOADER_PREFETCH_FACTOR)
 
     eval_dataset = make_dataset(
         config.dataset,
@@ -174,7 +182,9 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         dataset=eval_dataset,
         batch_size=EVAL_BATCH_SIZE,
         shuffle=False,
-        pin_memory=True)
+        pin_memory=True,
+        num_workers=LOADER_NUM_WORKERS,
+        prefetch_factor=LOADER_PREFETCH_FACTOR)
 
     hierarchy_file = SOURCE_DIR / f'resources/hierarchy/{config.hierarchy}.csv'
     with open(hierarchy_file) as f:
@@ -236,7 +246,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     }
 
     # TODO: Decide where to write logs. experiment_dir / 'tensorboard'?
-    writer = tensorboard.SummaryWriter(flush_secs=TENSBOARD_FLUSH_SECS)
+    writer = tensorboard.SummaryWriter(flush_secs=TENSORBOARD_FLUSH_SECS)
 
     # Loop for one extra epoch to save and evaluate model.
     for epoch in range(config.train.num_epochs + 1):
@@ -319,6 +329,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
             means = {method: {field: totals[method][field] / example_count
                               for field in totals[method]} for method in pred}
+            pprint.pprint(means)
             writer.add_scalar('loss/eval', loss, epoch)
             for method in pred:
                 for field in metric_fns:
