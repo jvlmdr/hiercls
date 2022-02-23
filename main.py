@@ -61,14 +61,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     device = torch.device('cuda')
     num_classes = get_num_classes(config.dataset)
 
-    if experiment_dir is not None:
-        checkpoint_dir = experiment_dir / 'checkpoints'
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    if experiment_dir is not None:
-        checkpoint_dir = experiment_dir / 'checkpoints'
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
     train_dataset = make_dataset(
         config.dataset,
         config.dataset_root,
@@ -140,17 +132,18 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         'info_excess': info_metric.excess,
         'info_deficient': info_metric.deficient,
         'info_dist': info_metric.dist,
-        'info_lca': info_metric.at,
-        'info_gt': lambda gt, _: info_metric.value[gt],
-        'info_pr': lambda _, pr: info_metric.value[pr],
+        'info_lca': info_metric.value_at_lca,
+        'info_gt': info_metric.value_at_gt,
+        'info_pr': info_metric.value_at_pr,
         'depth_excess': depth_metric.excess,
         'depth_deficient': depth_metric.deficient,
         'depth_dist': depth_metric.dist,
-        'depth_lca': depth_metric.at,
-        'depth_gt': lambda gt, _: depth_metric.value[gt],
-        'depth_pr': lambda _, pr: depth_metric.value[pr],
+        'depth_lca': depth_metric.value_at_lca,
+        'depth_gt': depth_metric.value_at_gt,
+        'depth_pr': depth_metric.value_at_pr,
     }
 
+    # TODO: Decide where to write logs. experiment_dir / 'tensorboard'?
     writer = tensorboard.SummaryWriter(flush_secs=TENSBOARD_FLUSH_SECS)
 
     # Loop for one extra epoch to save and evaluate model.

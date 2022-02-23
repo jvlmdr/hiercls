@@ -84,9 +84,19 @@ class LCAMetric:
         self.value = value
         self.find_lca = hier.FindLCA(tree)
 
-    def at(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
+    def value_at_lca(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
         lca = self.find_lca(gt, pr)
         return self.value[lca]
+
+    def value_at_gt(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
+        # TODO: Avoid broadcasting of unused array?
+        gt, _ = np.broadcast_arrays(gt, pr)
+        return self.value[gt]
+
+    def value_at_pr(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
+        # TODO: Avoid broadcasting of unused array?
+        _, pr = np.broadcast_arrays(gt, pr)
+        return self.value[pr]
 
     def excess(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
         lca = self.find_lca(gt, pr)
