@@ -4,6 +4,7 @@ import numpy as np
 
 import hier
 
+
 # TODO: Be careful using "excess" metric when gt is not leaf node.
 # Truncate predictions at gt? Revisit!
 def truncate(
