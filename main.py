@@ -2,13 +2,12 @@ from functools import partial
 import json
 import pathlib
 import pickle
-from typing import Optional
+from typing import Optional, Tuple
 
 from absl import app
 from absl import flags
 from absl import logging
 from jax import tree_util
-import ml_collections
 from ml_collections import config_flags
 import numpy as np
 import torch
@@ -41,18 +40,112 @@ flags.DEFINE_string('experiment_dir', None,
 FLAGS = flags.FLAGS
 
 
+MODEL_FNS = {
+    'torch_resnet18': lambda num_outputs: (
+        torchvision.models.resnet18(pretrained=False, num_classes=num_outputs)),
+    'kuangliu_resnet18': models.kuangliu_cifar.resnet.ResNet18,
+    'moit_preact_resnet18': lambda num_outputs: (
+        models.moit.preact_resnet.PreActResNet18(num_outputs, mode='')),
+}
+
+
+def make_model(name: str, num_outputs: int) -> nn.Module:
+    try:
+        model_fn = MODEL_FNS[name]
+    except KeyError:
+        raise ValueError('unknown model', name)
+    return model_fn(num_outputs)
+
+
+# Functions with signature:
+# dataset_fn(root, split, transform=transform)
+DATASET_FNS = {
+    'imagenet': torchvision.datasets.ImageNet,
+    'tiny_imagenet': datasets.TinyImageNet,
+}
+
+
+# Non-deterministic transforms have 'rand_' prefix.
+TRANSFORMS = {
+    # CIFAR train
+    'rand_pad4_crop32_hflip': transforms.Compose([
+        transforms.Pad(4),
+        transforms.RandomCrop(32),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ]),
+    # CIFAR eval
+    'none': transforms.Compose([
+        transforms.ToTensor(),
+    ]),
+
+    # ImageNet train
+    'rand_resizedcrop224_hflip': transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ]),
+    # ImageNet eval
+    'resize256_crop224': transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+    ]),
+
+    # Tiny ImageNet train (64px)
+    'rand_crop56_hflip': transforms.Compose([
+        transforms.RandomCrop(56),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ]),
+    # Tiny ImageNet eval (64px)
+    'crop56': transforms.Compose([
+        transforms.CenterCrop(56),
+        transforms.ToTensor(),
+    ]),
+}
+
+
+def make_dataset(name, root, split, transform_name):
+    try:
+        dataset_fn = DATASET_FNS[name]
+    except KeyError:
+        raise ValueError('unknown dataset', name)
+
+    try:
+        transform = TRANSFORMS[transform_name]
+    except KeyError:
+        raise ValueError('unknown transform', transform_name)
+
+    return dataset_fn(root, split, transform=transform)
+
+
+def get_num_classes(dataset) -> int:
+    if dataset == 'imagenet':
+        return 1000
+    if dataset == 'tiny_imagenet':
+        return 200
+    if dataset == 'cifar10':
+        return 10
+    raise ValueError('unknown dataset')
+
+
 def main(_):
     config = FLAGS.config
     experiment_dir = FLAGS.experiment_dir
-    if experiment_dir is not None:
+
+    if experiment_dir is None:
+        logging.warning('no experiment_dir; not saving experiment data')
+    else:
+        # Ensure that experiment directory exists.
+        # TODO: Check experiment_dir.exists() xor FLAGS.resume.
         experiment_dir = pathlib.Path(FLAGS.experiment_dir)
         logging.info('write experiment data to: %s', str(experiment_dir))
         experiment_dir.mkdir(parents=True, exist_ok=True)
+        # Dump config to file for future reference.
         config_str = json.dumps(config.to_dict())
         with open(experiment_dir / 'config.json', 'w') as f:
             f.write(config_str)
-    else:
-        logging.warning('no experiment_dir; not saving experiment data')
 
     train(config, experiment_dir)
 
@@ -63,9 +156,9 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
     train_dataset = make_dataset(
         config.dataset,
-        config.dataset_root,
-        config.train_split,
-        mode='train')
+        root=config.dataset_root,
+        split=config.train_split,
+        transform_name=config.train_transform)
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
         batch_size=config.train.batch_size,
@@ -74,9 +167,9 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
     eval_dataset = make_dataset(
         config.dataset,
-        config.dataset_root,
-        config.eval_split,
-        mode='eval')
+        root=config.dataset_root,
+        split=config.eval_split,
+        transform_name=config.eval_transform)
     eval_loader = torch.utils.data.DataLoader(
         dataset=eval_dataset,
         batch_size=EVAL_BATCH_SIZE,
@@ -88,6 +181,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         edges = hier.load_edges(f)
     tree, node_names = hier.make_hierarchy_from_edges(edges)
 
+    # TODO: Create a factory for this?
     if config.predict == 'flat_softmax':
         num_outputs = tree.num_leaf_nodes()  # num_classes
         loss_fn = nn.CrossEntropyLoss()
@@ -109,9 +203,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     else:
         raise ValueError('unknown predict method', config.predict)
 
-    net = torchvision.models.resnet18(pretrained=False, num_classes=num_outputs)
-    # net = models.kuangliu_cifar.resnet.ResNet18(num_outputs)
-    # net = models.moit.preact_resnet.PreActResNet18(num_outputs, mode='')
+    net = make_model(config.model, num_outputs)
     net.to(device)
 
     optimizer = optim.SGD(
@@ -313,75 +405,6 @@ def argmax_value_with_threshold(
         axis: int = -1) -> np.ndarray:
     assert axis == -1
     return np.nanargmax(np.where(prob > threshold, value, np.nan), axis=-1)
-
-
-def get_num_classes(dataset) -> int:
-    if dataset == 'imagenet':
-        return 1000
-    if dataset == 'tiny_imagenet':
-        return 200
-    if dataset == 'cifar10':
-        return 10
-    raise ValueError('unknown dataset')
-
-
-DATASET_FNS = {
-    'imagenet': torchvision.datasets.ImageNet,
-    'tiny_imagenet': datasets.TinyImageNet,
-    'cifar10': torchvision.datasets.CIFAR10,
-}
-
-
-def make_dataset(dataset, root, split, mode):
-    try:
-        dataset_fn = DATASET_FNS[dataset]
-    except KeyError:
-        raise ValueError('unknown dataset', dataset)
-
-    if dataset == 'imagenet':
-        if mode == 'train':
-            transform = transforms.Compose([
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-            ])
-        elif mode == 'eval':
-            transform = transforms.Compose([
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
-                transforms.ToTensor(),
-            ])
-
-    elif dataset == 'tiny_imagenet':
-        if mode == 'train':
-            transform = transforms.Compose([
-                transforms.RandomCrop(56),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-            ])
-        elif mode == 'eval':
-            transform = transforms.Compose([
-                transforms.CenterCrop(56),
-                transforms.ToTensor(),
-            ])
-
-    elif 'cifar' in dataset:
-        if mode == 'train':
-            transform = transforms.Compose([
-                transforms.Pad(4),
-                transforms.RandomCrop(32),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-            ])
-        elif mode == 'eval':
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-            ])
-
-    else:
-        raise ValueError('no transform configured for dataset', dataset)
-
-    return dataset_fn(root, split, transform=transform)
 
 
 if __name__ == '__main__':
