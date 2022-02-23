@@ -1,15 +1,4 @@
-"""Tiny ImageNet contains 200 classes and 64px images.
-
-Download from:
-http://cs231n.stanford.edu/tiny-imagenet-200.zip
-
-Expects directory structure:
-    wnids.txt
-    train/{class}/{example}.{ext}
-    val/val_annotations.txt
-    val/images/{example}.{ext}
-    test/images/{example}.{ext}
-"""
+"""Tiny ImageNet contains 200 classes and 64px images."""
 
 import csv
 import os
@@ -26,6 +15,16 @@ def TinyImageNet(root: str, split: str, **kwargs):
     Args:
         root: Path to dataset.
         split: Either 'train' or 'val'.
+
+    Expects directory structure:
+        wnids.txt
+        train/{class}/{example}.{ext}
+        val/val_annotations.txt
+        val/images/{example}.{ext}
+        test/images/{example}.{ext}
+
+    Download from:
+    http://cs231n.stanford.edu/tiny-imagenet-200.zip
     """
     if split == 'train':
         return FromFolder(root, split, **kwargs)
@@ -34,6 +33,7 @@ def TinyImageNet(root: str, split: str, **kwargs):
 
 
 class FromFolder(torchvision.datasets.ImageFolder):
+    """Loads list of images for each class from directory structure."""
 
     def __init__(self, root: str, split: str, **kwargs):
         self.wnids = load_wnids(os.path.join(root, 'wnids.txt'))
@@ -46,6 +46,7 @@ class FromFolder(torchvision.datasets.ImageFolder):
 
 
 class FromList(torchvision.datasets.VisionDataset):
+    """Loads images and labels from tab-separated table."""
 
     def __init__(self, root: str, split: str,
                  loader: Callable = default_loader,
