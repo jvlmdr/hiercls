@@ -66,6 +66,7 @@ def make_model(name: str, num_outputs: int) -> nn.Module:
 DATASET_FNS = {
     'imagenet': torchvision.datasets.ImageNet,
     'tiny_imagenet': datasets.TinyImageNet,
+    'inaturalist2018': datasets.INaturalist2018,
 }
 
 
@@ -124,16 +125,6 @@ def make_dataset(name, root, split, transform_name):
     return dataset_fn(root, split, transform=transform)
 
 
-def get_num_classes(dataset) -> int:
-    if dataset == 'imagenet':
-        return 1000
-    if dataset == 'tiny_imagenet':
-        return 200
-    if dataset == 'cifar10':
-        return 10
-    raise ValueError('unknown dataset')
-
-
 def main(_):
     config = FLAGS.config
     experiment_dir = FLAGS.experiment_dir
@@ -158,7 +149,6 @@ def main(_):
 
 def train(config, experiment_dir: Optional[pathlib.Path]):
     device = torch.device('cuda')
-    num_classes = get_num_classes(config.dataset)
 
     train_dataset = make_dataset(
         config.dataset,
@@ -193,7 +183,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
     # TODO: Create a factory for this?
     if config.predict == 'flat_softmax':
-        num_outputs = tree.num_leaf_nodes()  # num_classes
+        num_outputs = tree.num_leaf_nodes()
         loss_fn = nn.CrossEntropyLoss()
         pred_fn = partial(
             lambda sum_fn, theta: sum_fn(theta.softmax(dim=-1), dim=-1),
