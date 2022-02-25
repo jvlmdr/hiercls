@@ -40,6 +40,7 @@ config_flags.DEFINE_config_file('config')
 flags.DEFINE_string('experiment_dir', None,
                     'Where to write experiment data.')
 flags.DEFINE_bool('resume', False, 'Resume from previous checkpoint.')
+flags.DEFINE_bool('skip_initial_eval', True, 'Skip eval for epoch 0.')
 
 FLAGS = flags.FLAGS
 
@@ -47,6 +48,8 @@ FLAGS = flags.FLAGS
 MODEL_FNS = {
     'torch_resnet18': lambda num_outputs: (
         torchvision.models.resnet18(pretrained=False, num_classes=num_outputs)),
+    'torch_resnet50': lambda num_outputs: (
+        torchvision.models.resnet50(pretrained=False, num_classes=num_outputs)),
     'kuangliu_resnet18': models.kuangliu_cifar.resnet.ResNet18,
     'moit_preact_resnet18': lambda num_outputs: (
         models.moit.preact_resnet.PreActResNet18(num_outputs, mode='')),
@@ -69,6 +72,8 @@ DATASET_FNS = {
     'inaturalist2018': datasets.INaturalist2018,
 }
 
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
 
 # Non-deterministic transforms have 'rand_' prefix.
 TRANSFORMS = {
@@ -89,12 +94,14 @@ TRANSFORMS = {
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
+        normalize,
     ]),
     # ImageNet eval
     'resize256_crop224': transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
+        normalize,
     ]),
 
     # Tiny ImageNet train (64px)
@@ -249,7 +256,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
             torch.save(net.state_dict(), checkpoint_file)
 
-        if epoch % EVAL_FREQ_EPOCHS == 0:
+        if (epoch > 0 and epoch % EVAL_FREQ_EPOCHS == 0) or (epoch == 0 and not FLAGS.skip_initial_eval):
             leaf_nodes = tree.leaf_subset()
             depths = tree.depths()
             find_lca = hier.FindLCA(tree)
@@ -257,6 +264,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             # Counts and totals to obtain means.
             example_count = 0
             totals = {method: {field: 0 for field in metric_fns} for method in PREDICT_METHODS}
+            total_err = 0
             # Per-example predictions to write to filesystem.
             outputs = {
                 'gt': [],  # Node in hierarchy.
@@ -274,11 +282,13 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             # Voluminous per-example predictions. To be written to a separate file.
             full_outputs = {'prob': []}
 
+            net.eval()
             with torch.inference_mode():
-                for i, minibatch in enumerate(tqdm.tqdm(eval_loader, f'eval (epoch {epoch})')):
+                for minibatch in tqdm.tqdm(eval_loader, f'eval (epoch {epoch})'):
                     inputs, labels = map(lambda x: x.to(device), minibatch)
                     theta = net(inputs)
                     loss = loss_fn(theta, labels)
+                    total_err += torch.sum(torch.argmax(theta, dim=-1) != labels).item()
                     prob = pred_fn(theta)
                     prob = prob.cpu().numpy()
                     labels = labels.cpu().numpy()
@@ -317,6 +327,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                         metric_seqs = [metric_fn(gt[i], pred_seqs[i]) for i in range(batch_len)]
                         seq_outputs['metric'][field].extend(metric_seqs)
 
+            mean_err = total_err / example_count
+            logging.info('eval err:%.3f', mean_err)
             means = {method: {field: totals[method][field] / example_count
                               for field in totals[method]} for method in pred}
             pprint.pprint(means)
@@ -365,18 +377,31 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
         # Train one epoch.
         total_loss = 0.
+        total_err = 0
         step_count = 0
-        for i, minibatch in enumerate(tqdm.tqdm(train_loader, f'train (epoch {epoch})')):
+        example_count = 0
+        net.train()
+        for minibatch in tqdm.tqdm(train_loader, f'train (epoch {epoch})'):
             inputs, labels = map(lambda x: x.to(device), minibatch)
             optimizer.zero_grad()
             theta = net(inputs)
             loss = loss_fn(theta, labels)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
+            if loss.isnan():
+                raise ValueError('loss is nan')
+            if loss.isinf():
+                raise ValueError('loss is inf')
+            loss = loss.item()
+            logging.debug('loss: %g', loss)
+            total_loss += loss
+            total_err += torch.sum(torch.argmax(theta, dim=-1) != labels).item()
             step_count += 1
+            example_count += inputs.shape[0]
         mean_loss = total_loss / step_count
-        logging.info('mean train loss:%11.4e', mean_loss)
+        mean_err = total_err / example_count
+        # TODO: Compute other metrics during training?
+        logging.info('train loss:%11.4e err:%.3f', mean_loss, mean_err)
         writer.add_scalar('loss/train', mean_loss, epoch)
 
         scheduler.step()

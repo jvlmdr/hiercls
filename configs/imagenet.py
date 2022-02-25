@@ -19,6 +19,6 @@ def get_config():
             'num_epochs': 100,
             'learning_rate': 0.01,
             'momentum': 0.9,
-            'weight_decay': 5e-4,
+            'weight_decay': 1e-4,
         }),
     })
