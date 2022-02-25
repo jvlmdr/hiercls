@@ -20,5 +20,6 @@ def get_config():
             'learning_rate': 0.01,
             'momentum': 0.9,
             'weight_decay': 5e-4,
+            'hxe_alpha': 0.0,
         }),
     })

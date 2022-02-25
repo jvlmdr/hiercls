@@ -203,6 +203,12 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
             # partial(hier_torch.hier_log_softmax, tree)
             hier_torch.HierLogSoftmax(tree).to(device))
+    elif config.predict == 'bertinetto_hxe':
+        num_outputs = tree.num_nodes() - 1
+        loss_fn = hier_torch.BertinettoHXE(tree, config.train.hxe_alpha, with_leaf_targets=True).to(device)
+        pred_fn = partial(
+            lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
+            hier_torch.HierLogSoftmax(tree).to(device))
     elif config.predict == 'multilabel':
         num_outputs = tree.num_nodes() - 1
         loss_fn = hier_torch.MultiLabelNLL(tree, with_leaf_targets=True).to(device)
@@ -264,7 +270,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             # Counts and totals to obtain means.
             example_count = 0
             totals = {method: {field: 0 for field in metric_fns} for method in PREDICT_METHODS}
-            total_err = 0
             # Per-example predictions to write to filesystem.
             outputs = {
                 'gt': [],  # Node in hierarchy.
@@ -288,7 +293,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     inputs, labels = map(lambda x: x.to(device), minibatch)
                     theta = net(inputs)
                     loss = loss_fn(theta, labels)
-                    total_err += torch.sum(torch.argmax(theta, dim=-1) != labels).item()
                     prob = pred_fn(theta)
                     prob = prob.cpu().numpy()
                     labels = labels.cpu().numpy()
@@ -298,6 +302,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     pred['leaf'] = argmax_leaf(tree, prob)
                     pred['majority'] = argmax_value_with_threshold(tree, depths, prob, threshold=0.5)
                     # Truncate predictions where more specific than ground-truth.
+                    # (Only necessary if some labels are not leaf nodes.)
                     # TODO: Need to do for range sequences as well.
                     # pred = {k: hier.truncate_given_lca(gt, pr, find_lca(gt, pr))
                     #         for k, pr in pred.items()}
@@ -327,8 +332,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                         metric_seqs = [metric_fn(gt[i], pred_seqs[i]) for i in range(batch_len)]
                         seq_outputs['metric'][field].extend(metric_seqs)
 
-            mean_err = total_err / example_count
-            logging.info('eval err:%.3f', mean_err)
             means = {method: {field: totals[method][field] / example_count
                               for field in totals[method]} for method in pred}
             pprint.pprint(means)
@@ -377,7 +380,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
         # Train one epoch.
         total_loss = 0.
-        total_err = 0
         step_count = 0
         example_count = 0
         net.train()
@@ -395,13 +397,11 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             loss = loss.item()
             logging.debug('loss: %g', loss)
             total_loss += loss
-            total_err += torch.sum(torch.argmax(theta, dim=-1) != labels).item()
             step_count += 1
             example_count += inputs.shape[0]
         mean_loss = total_loss / step_count
-        mean_err = total_err / example_count
         # TODO: Compute other metrics during training?
-        logging.info('train loss:%11.4e err:%.3f', mean_loss, mean_err)
+        logging.info('train loss:%11.4e', mean_loss)
         writer.add_scalar('loss/train', mean_loss, epoch)
 
         scheduler.step()

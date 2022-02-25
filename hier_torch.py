@@ -11,22 +11,24 @@ import hier
 def hier_softmax_nll(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
-        target: torch.Tensor) -> torch.Tensor:
+        labels: torch.Tensor) -> torch.Tensor:
     log_prob = hier_log_softmax(tree, scores, dim=-1)
-    nll = -torch.gather(log_prob, -1, target)
+    assert labels.ndim == scores.ndim - 1
+    nll = -torch.gather(log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
     return torch.mean(nll)
 
 
 def hier_softmax_nll_with_leaf(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
-        target: torch.Tensor) -> torch.Tensor:
+        labels: torch.Tensor) -> torch.Tensor:
     device = scores.device
     leaf_subset = torch.from_numpy(tree.leaf_subset()).to(device)
     # TODO: Could make this faster by only computing likelihood for targets.
     log_prob = hier_log_softmax(tree, scores, dim=-1)
     leaf_log_prob = torch.index_select(log_prob, -1, leaf_subset)
-    nll = -torch.gather(leaf_log_prob, -1, target.unsqueeze(-1)).squeeze(-1)
+    assert labels.ndim == scores.ndim - 1
+    nll = -torch.gather(leaf_log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
     return torch.mean(nll)
 
 
@@ -51,17 +53,17 @@ class HierSoftmaxNLL(nn.Module):
     def device(self) -> torch.device:
         return self.hier_log_softmax.device
 
-    def forward(self, scores: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         # TODO: Could make this faster by only computing likelihood for targets.
         device = self.device
         log_prob = self.hier_log_softmax(scores, dim=-1)
         if self.label_order is not None:
             log_prob = torch.index_select(log_prob, -1, self.label_order.to(device))
-        nll = -torch.gather(log_prob, -1, target.unsqueeze(-1)).squeeze(-1)
+        nll = -torch.gather(log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
         return torch.mean(nll)
 
 
-def hier_log_softmax(
+def hier_cond_log_softmax(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         dim: int = -1) -> torch.Tensor:
@@ -73,7 +75,6 @@ def hier_log_softmax(
     # Use index_copy with flat_index, then reshape and compute log_softmax.
     # Then re-flatten and use index_select with flat_index.
     # This is faster than using torch.split() and map(log_softmax, ...).
-    # Finally, take sum over ancestor conditionals to obtain likelihoods.
     assert dim == -1 or dim == scores.ndim - 1
     num_nodes = tree.num_nodes()
     num_internal = tree.num_internal_nodes()
@@ -85,12 +86,10 @@ def hier_log_softmax(
     col_index = np.concatenate([np.arange(n) for n in cond_num_children])
     flat_index = row_index * max_num_children + col_index
     child_index = np.concatenate(cond_children)
-    sum_ancestors_fn = SumAncestors(tree, exclude_root=False)
 
     device = scores.device
     flat_index = torch.from_numpy(flat_index).to(device)
     child_index = torch.from_numpy(child_index).to(device)
-    sum_ancestors_fn = sum_ancestors_fn.to(device)
     input_shape = list(scores.shape)
     flat_shape = [*input_shape[:-1], num_internal * max_num_children]
     # Pad with -inf for log_softmax.
@@ -105,11 +104,24 @@ def hier_log_softmax(
     # log_cond_p[..., child_index] = child_log_p[..., flat_index]
     log_cond_p = torch.zeros(output_shape, device=device).index_copy_(
         -1, child_index, child_log_p.index_select(-1, flat_index))
+    return log_cond_p
+
+
+def hier_log_softmax(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        dim: int = -1) -> torch.Tensor:
+    # Finally, take sum over ancestor conditionals to obtain likelihoods.
+    assert dim == -1 or dim == scores.ndim - 1
+    log_cond_p = hier_cond_log_softmax(tree, scores, dim=dim)
+    # TODO: Use functional form here?
+    device = scores.device
+    sum_ancestors_fn = SumAncestors(tree, exclude_root=False).to(device)
     return sum_ancestors_fn(log_cond_p, dim=-1)
 
 
-class HierLogSoftmax(nn.Module):
-    """Avoids re-computation in hier_log_softmax()."""
+class HierCondLogSoftmax(nn.Module):
+    """Returns log-likelihood of each node given its parent."""
 
     def __init__(self, tree: hier.Hierarchy):
         super().__init__()
@@ -123,28 +135,21 @@ class HierLogSoftmax(nn.Module):
         col_index = np.concatenate([np.arange(n) for n in cond_num_children])
         flat_index = torch.from_numpy(row_index * max_num_children + col_index)
         child_index = torch.from_numpy(np.concatenate(cond_children))
-        sum_ancestors_fn = SumAncestors(tree, exclude_root=False)
 
         self.num_nodes = num_nodes
         self.num_internal = num_internal
         self.max_num_children = max_num_children
         self.flat_index = flat_index
         self.child_index = child_index
-        self.sum_ancestors_fn = sum_ancestors_fn
 
-    def _apply(self, fn):
-        super()._apply(fn)
-        # Do not apply fn to indices because it might convert dtype.
-        self.sum_ancestors_fn = self.sum_ancestors_fn._apply(fn)
-        return self
-
-    @property
-    def device(self) -> torch.device:
-        return self.sum_ancestors_fn.device
+    # def _apply(self, fn):
+    #     super()._apply(fn)
+    #     # Do not apply fn to indices because it might convert dtype.
+    #     return self
 
     def forward(self, scores: torch.Tensor, dim: int = -1) -> torch.Tensor:
         assert dim == -1 or dim == scores.ndim - 1
-        device = self.device
+        device = scores.device
         input_shape = list(scores.shape)
         flat_shape = [*input_shape[:-1], self.num_internal * self.max_num_children]
         # Pad with -inf for log_softmax.
@@ -161,7 +166,30 @@ class HierLogSoftmax(nn.Module):
         # log_cond_p[..., child_index] = child_log_p[..., flat_index]
         log_cond_p = torch.zeros(output_shape, device=device).index_copy_(
             -1, child_index, child_log_p.index_select(-1, flat_index))
-        return self.sum_ancestors_fn(log_cond_p, dim=-1)
+        return log_cond_p
+
+
+class HierLogSoftmax(nn.Module):
+    """Avoids re-computation in hier_log_softmax()."""
+
+    def __init__(self, tree: hier.Hierarchy):
+        super().__init__()
+        self.cond_log_softmax = HierCondLogSoftmax(tree)
+        self.sum_ancestors_fn = SumAncestors(tree, exclude_root=False)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.cond_log_softmax = self.cond_log_softmax._apply(fn)
+        self.sum_ancestors_fn = self.sum_ancestors_fn._apply(fn)
+        return self
+
+    @property
+    def device(self) -> torch.device:
+        return self.sum_ancestors_fn.device
+
+    def forward(self, scores: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        log_cond_p = self.cond_log_softmax(scores, dim=dim)
+        return self.sum_ancestors_fn(log_cond_p, dim=dim)
 
 
 def leaf_embed(
@@ -316,9 +344,9 @@ class MultiLabelNLL(nn.Module):
     def device(self) -> torch.device:
         return self.binary_labels.device
 
-    def forward(self, scores: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         return self.bce_loss(scores,
-                             torch.index_select(self.binary_labels, 0, target))
+                             torch.index_select(self.binary_labels, 0, labels))
 
 
 def multilabel_likelihood(tree: hier.Hierarchy, scores: torch.Tensor, dim=-1):
@@ -327,8 +355,91 @@ def multilabel_likelihood(tree: hier.Hierarchy, scores: torch.Tensor, dim=-1):
 
 def multilabel_log_likelihood(tree: hier.Hierarchy, scores: torch.Tensor, dim=-1):
     assert scores.shape[dim] == tree.num_nodes() - 1
-    assert dim == -1
+    assert dim == -1 or dim == scores.ndim - 1
     shape = list(scores.shape)
     shape[-1] = 1
     zero = torch.zeros(shape, dtype=scores.dtype, device=scores.device)
     return torch.cat([zero, nn.functional.logsigmoid(scores)], dim=-1)
+
+
+def hier_softmax_cross_entropy(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        q: torch.Tensor,
+        dim: int = -1) -> torch.Tensor:
+    """The target distribution q should be hierarchical."""
+    # Get conditional likelihoods for each node given its parent.
+    log_cond_p = hier_cond_log_softmax(tree, scores, dim=dim)
+    xent = torch.sum(q * -log_cond_p, dim=dim)
+    return torch.mean(xent)
+
+
+def bertinetto_hxe(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        alpha: float = 0.0,
+        dim: int = -1) -> torch.Tensor:
+    """The target is an index of a node in the tree."""
+    device = scores.device
+    # Get conditional likelihoods for each node given its parent.
+    log_cond_p = hier_cond_log_softmax(tree, scores, dim=dim)
+    # Take weighted sum over ancestors.
+    # Weight each conditional likelihood by exp(-alpha * parent_depth).
+    # Note that log_cond_p of root is always zero.
+    parent_depth = torch.from_numpy(tree.depths() - 1)
+    weight = torch.exp(-alpha * parent_depth).to(device)
+    assert dim == -1 or dim == scores.ndim - 1
+    weighted_cond_nll = -weight * log_cond_p
+    weighted_nll = sum_ancestors(tree, weighted_cond_nll, dim=dim, strict=False)
+    assert labels.ndim == scores.ndim - 1
+    label_nll = torch.gather(weighted_nll, dim, labels.unsqueeze(-1)).squeeze(-1)
+    return torch.mean(label_nll)
+
+
+class BertinettoHXE(nn.Module):
+    """Avoids re-computation in bertinetto_hxe()."""
+
+    def __init__(self,
+                 tree: hier.Hierarchy,
+                 alpha: float = 0.,
+                 with_leaf_targets: bool = False):
+        super().__init__()
+        self.hier_cond_log_softmax_fn = HierCondLogSoftmax(tree)
+        parent_depth = torch.from_numpy(tree.depths() - 1)
+        self.weight = torch.exp(-alpha * parent_depth)
+        if with_leaf_targets:
+            self.label_order = torch.from_numpy(tree.leaf_subset())
+        else:
+            self.label_order = None
+        self.sum_ancestors_fn = SumAncestors(tree, strict=False)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.weight = fn(self.weight)
+        self.hier_cond_log_softmax_fn = self.hier_cond_log_softmax_fn._apply(fn)
+        self.sum_ancestors_fn = self.sum_ancestors_fn._apply(fn)
+        return self
+
+    @property
+    def device(self) -> torch.device:
+        return self.weight.device
+
+    def forward(self,
+                scores: torch.Tensor,
+                labels: torch.Tensor,
+                dim: int = -1) -> torch.Tensor:
+        device = self.device
+        log_cond_p = self.hier_cond_log_softmax_fn(scores, dim=dim)
+        assert dim == -1 or dim == scores.ndim - 1
+        # Take weighted sum over ancestors.
+        # Weight each conditional likelihood by exp(-alpha * parent_depth).
+        # Note that log_cond_p of root is always zero.
+        weighted_cond_nll = -self.weight * log_cond_p
+        weighted_nll = self.sum_ancestors_fn(weighted_cond_nll, dim=dim)
+        assert labels.ndim == scores.ndim - 1
+        if self.label_order is not None:
+            weighted_nll = torch.index_select(
+                weighted_nll, dim, self.label_order.to(device))
+        label_nll = torch.gather(weighted_nll, dim, labels.unsqueeze(-1)).squeeze(-1)
+        return torch.mean(label_nll)
