@@ -250,6 +250,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
     # TODO: Decide where to write logs. experiment_dir / 'tensorboard'?
     writer = tensorboard.SummaryWriter(flush_secs=TENSORBOARD_FLUSH_SECS)
+    leaf_nodes = tree.leaf_subset()
+    depths = tree.depths()
 
     # Loop for one extra epoch to save and evaluate model.
     for epoch in range(config.train.num_epochs + 1):
@@ -263,13 +265,12 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             torch.save(net.state_dict(), checkpoint_file)
 
         if (epoch > 0 and epoch % EVAL_FREQ_EPOCHS == 0) or (epoch == 0 and not FLAGS.skip_initial_eval):
-            leaf_nodes = tree.leaf_subset()
-            depths = tree.depths()
             find_lca = hier.FindLCA(tree)
 
             # Counts and totals to obtain means.
             example_count = 0
-            totals = {method: {field: 0 for field in metric_fns} for method in PREDICT_METHODS}
+            total_loss = 0.
+            metric_totals = {method: {field: 0 for field in metric_fns} for method in PREDICT_METHODS}
             # Per-example predictions to write to filesystem.
             outputs = {
                 'gt': [],  # Node in hierarchy.
@@ -293,8 +294,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     inputs, labels = map(lambda x: x.to(device), minibatch)
                     theta = net(inputs)
                     loss = loss_fn(theta, labels)
-                    prob = pred_fn(theta)
-                    prob = prob.cpu().numpy()
+                    prob = pred_fn(theta).cpu().numpy()
                     labels = labels.cpu().numpy()
                     batch_len = len(labels)
                     gt = leaf_nodes[labels]
@@ -308,6 +308,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     #         for k, pr in pred.items()}
                     max_leaf_prob = max_leaf(tree, prob)
 
+                    total_loss += batch_len * loss.item()  # TODO: Avoid assuming mean?
                     example_count += batch_len
                     outputs['gt'].append(gt)
                     outputs['label'].append(labels)
@@ -319,7 +320,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                             metric_fn = metric_fns[field]
                             metric_value = metric_fn(gt, pred[method])
                             outputs['metric'][method][field].append(metric_value)
-                            totals[method][field] += metric_value.sum()
+                            metric_totals[method][field] += metric_value.sum()
 
                     pred_seqs = [sorted_above_threshold(p, threshold=0.5) for p in prob]
                     # TODO: Could vectorize if necessary.
@@ -332,13 +333,22 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                         metric_seqs = [metric_fn(gt[i], pred_seqs[i]) for i in range(batch_len)]
                         seq_outputs['metric'][field].extend(metric_seqs)
 
-            means = {method: {field: totals[method][field] / example_count
-                              for field in totals[method]} for method in pred}
-            pprint.pprint(means)
-            writer.add_scalar('loss/eval', loss, epoch)
+            mean_loss = total_loss / example_count
+            writer.add_scalar('loss/eval', mean_loss, epoch)
+            logging.info('eval loss: %.5g', mean_loss)
+            metric_means = {method: {field: metric_totals[method][field] / example_count
+                                     for field in metric_totals[method]} for method in pred}
             for method in pred:
                 for field in metric_fns:
-                    writer.add_scalar(f'{field}/{method}/eval', means[method][field], epoch)
+                    writer.add_scalar(f'{field}/{method}/eval', metric_means[method][field], epoch)
+            logging.info(
+                'leaf: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g',
+                metric_means['leaf']['exact'], metric_means['leaf']['correct'],
+                metric_means['leaf']['depth_dist'], metric_means['leaf']['info_dist'])
+            logging.info(
+                'majority: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g',
+                metric_means['majority']['exact'], metric_means['majority']['correct'],
+                metric_means['majority']['depth_dist'], metric_means['majority']['info_dist'])
 
             # Concatenate minibatches into large array.
             leaf_predicate = lambda x: not isinstance(x, dict)  # Lists are values not containers.
@@ -380,6 +390,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
         # Train one epoch.
         total_loss = 0.
+        metric_totals = {method: {field: 0 for field in metric_fns}
+                         for method in PREDICT_METHODS}
         step_count = 0
         example_count = 0
         net.train()
@@ -398,11 +410,39 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             logging.debug('loss: %g', loss)
             total_loss += loss
             step_count += 1
-            example_count += inputs.shape[0]
+
+            # Evaluate metrics for batch predictions and add to totals.
+            with torch.no_grad():
+                prob = pred_fn(theta)
+            prob = prob.cpu().numpy()
+            labels = labels.cpu().numpy()
+            batch_len = len(labels)
+            gt = leaf_nodes[labels]  # Labels are leaf nodes.
+            pred = {}
+            pred['leaf'] = argmax_leaf(tree, prob)
+            pred['majority'] = argmax_value_with_threshold(tree, depths, prob, threshold=0.5)
+            for method in PREDICT_METHODS:
+                for field in metric_fns:
+                    metric_fn = metric_fns[field]
+                    metric_totals[method][field] += metric_fn(gt, pred[method]).sum()
+            example_count += batch_len
+
         mean_loss = total_loss / step_count
-        # TODO: Compute other metrics during training?
-        logging.info('train loss:%11.4e', mean_loss)
         writer.add_scalar('loss/train', mean_loss, epoch)
+        logging.info('train loss: %.5g', mean_loss)
+        metric_means = {method: {field: metric_totals[method][field] / example_count
+                                 for field in metric_totals[method]} for method in pred}
+        for method in pred:
+            for field in metric_fns:
+                writer.add_scalar(f'{field}/{method}/train', metric_means[method][field], epoch)
+        logging.info(
+            'leaf: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g',
+            metric_means['leaf']['exact'], metric_means['leaf']['correct'],
+            metric_means['leaf']['depth_dist'], metric_means['leaf']['info_dist'])
+        logging.info(
+            'majority: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g',
+            metric_means['majority']['exact'], metric_means['majority']['correct'],
+            metric_means['majority']['depth_dist'], metric_means['majority']['info_dist'])
 
         scheduler.step()
 
