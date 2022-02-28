@@ -2,7 +2,6 @@ from functools import partial
 import json
 import pathlib
 import pickle
-import pprint
 from typing import Optional, Tuple
 
 from absl import app
@@ -37,8 +36,19 @@ TENSORBOARD_FLUSH_SECS = 5
 PREDICT_METHODS = ['leaf', 'majority']
 
 config_flags.DEFINE_config_file('config')
-flags.DEFINE_string('experiment_dir', None,
-                    'Where to write experiment data.')
+
+# Standard usage:
+# EXP_GROUP=...
+# EXP_NAME=...
+# --experiment_dir=$EXP_GROUP/$EXP_NAME
+# --tensorboard_dir=$EXP_GROUP/tensorboard/$EXP_NAME
+flags.DEFINE_string(
+    'experiment_dir', None, 'Where to write experiment data.')
+flags.DEFINE_string(
+    'tensorboard_dir', None,
+    'Where to write tensorboard logs. '
+    'Logs will be written under a dir for the experiment_id.')
+
 flags.DEFINE_bool('resume', False, 'Resume from previous checkpoint.')
 flags.DEFINE_bool('skip_initial_eval', True, 'Skip eval for epoch 0.')
 
@@ -139,8 +149,7 @@ def main(_):
     if not experiment_dir:
         logging.warning('no experiment_dir; not saving experiment data')
     else:
-        # Ensure that experiment directory exists.
-        # TODO: Check experiment_dir.exists() xor FLAGS.resume.
+        # Create experiment directory.
         experiment_dir = pathlib.Path(FLAGS.experiment_dir).absolute()
         if experiment_dir.exists() and not FLAGS.resume:
             raise ValueError('dir exists but resume is not set', str(experiment_dir))
@@ -249,7 +258,10 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     }
 
     # TODO: Decide where to write logs. experiment_dir / 'tensorboard'?
-    writer = tensorboard.SummaryWriter(flush_secs=TENSORBOARD_FLUSH_SECS)
+    writer = tensorboard.SummaryWriter(
+        FLAGS.tensorboard_dir or None,
+        flush_secs=TENSORBOARD_FLUSH_SECS)
+
     leaf_nodes = tree.leaf_subset()
     depths = tree.depths()
 
