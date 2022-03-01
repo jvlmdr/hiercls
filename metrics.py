@@ -70,12 +70,12 @@ def deficient_depth(tree: hier.Hierarchy, *args) -> np.ndarray:
 
 
 def excess_info(tree: hier.Hierarchy, *args) -> np.ndarray:
-    info = -np.log(hier.uniform_leaf(tree))
+    info = -np.log2(hier.uniform_leaf(tree))
     return excess(info, tree, *args)
 
 
 def deficient_info(tree: hier.Hierarchy, *args) -> np.ndarray:
-    info = -np.log(hier.uniform_leaf(tree))
+    info = -np.log2(hier.uniform_leaf(tree))
     return deficient(info, tree, *args)
 
 
@@ -99,13 +99,13 @@ class LCAMetric:
         _, pr = np.broadcast_arrays(gt, pr)
         return self.value[pr]
 
-    def excess(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
-        lca = self.find_lca(gt, pr)
-        return self.value[pr] - self.value[lca]
-
     def deficient(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
         lca = self.find_lca(gt, pr)
         return self.value[gt] - self.value[lca]
+
+    def excess(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
+        lca = self.find_lca(gt, pr)
+        return self.value[pr] - self.value[lca]
 
     def dist(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
         lca = self.find_lca(gt, pr)
@@ -113,9 +113,17 @@ class LCAMetric:
         deficient = self.value[gt] - self.value[lca]
         return excess + deficient
 
+    def recall(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
+        lca = self.find_lca(gt, pr)
+        return self.value[lca] / self.value[gt]
+
+    def precision(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
+        lca = self.find_lca(gt, pr)
+        return self.value[lca] / self.value[pr]
+
 
 def UniformLeafInfoMetric(tree: hier.Hierarchy) -> LCAMetric:
-    info = -np.log(hier.uniform_leaf(tree))
+    info = -np.log2(hier.uniform_leaf(tree))
     return LCAMetric(tree, info)
 
 

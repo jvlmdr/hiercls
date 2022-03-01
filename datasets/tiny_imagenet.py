@@ -48,9 +48,10 @@ class FromFolder(torchvision.datasets.ImageFolder):
 class FromList(torchvision.datasets.VisionDataset):
     """Loads images and labels from tab-separated table."""
 
-    def __init__(self, root: str, split: str,
-                 loader: Callable = default_loader,
-                 **kwargs):
+    def __init__(
+            self, root: str, split: str,
+            loader: Callable = default_loader,
+            **kwargs):
         # Parent constructor sets root and handles transforms.
         super().__init__(root, **kwargs)
         self.split = split

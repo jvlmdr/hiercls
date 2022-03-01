@@ -1,7 +1,7 @@
 import collections
 import csv
 import itertools
-from typing import Callable, Dict, List, Sequence, TextIO, Tuple
+from typing import Callable, Collection, Dict, List, Sequence, TextIO, Tuple
 
 import numpy as np
 
@@ -176,6 +176,27 @@ def load_edges(f: TextIO, delimiter=',') -> List[Tuple[str, str]]:
             raise ValueError('invalid row', row)
         pairs.append(tuple(row))
     return pairs
+
+
+def subtree(tree: Hierarchy, nodes: Collection[int]) -> Tuple[Hierarchy, List[int], List[int]]:
+    """Finds the subtree that contains a subset of nodes."""
+    # Expand set of nodes to include all ancestors.
+    paths = tree.paths()
+    nodes = sorted(set(itertools.chain.from_iterable(paths[x] for x in nodes)))
+    if not nodes:
+        raise ValueError('empty tree')
+    assert nodes[0] == 0  # Root should always be present.
+    reindex = {node: i for i, node in enumerate(nodes)}
+    reindex[-1] = -1  # Parent of root is -1.
+    parents = tree.parents()
+    subtree_parents = np.asarray([reindex[x] for x in parents[nodes]])
+    assert np.all(subtree_parents < np.arange(len(nodes)))
+    subtree = Hierarchy(subtree_parents)
+    # Obtain projection from original node to index of nearest node in new tree.
+    proj = np.asarray([max(reindex[x] for x in path if x in reindex) for path in paths])
+    assert np.all(proj >= 0)
+    assert np.all(proj < subtree.num_nodes())
+    return subtree, nodes, proj
 
 
 def uniform_leaf(tree: Hierarchy) -> np.ndarray:

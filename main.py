@@ -13,7 +13,8 @@ import numpy as np
 import torch
 from torch import nn
 from torch import optim
-from torch.utils import tensorboard
+import torch.utils.data
+import torch.utils.tensorboard
 import torchvision
 from torchvision import transforms
 import tqdm
@@ -171,19 +172,57 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         root=config.dataset_root,
         split=config.train_split,
         transform_name=config.train_transform)
-    train_loader = torch.utils.data.DataLoader(
-        dataset=train_dataset,
-        batch_size=config.train.batch_size,
-        shuffle=True,
-        pin_memory=True,
-        num_workers=LOADER_NUM_WORKERS,
-        prefetch_factor=LOADER_PREFETCH_FACTOR)
-
     eval_dataset = make_dataset(
         config.dataset,
         root=config.dataset_root,
         split=config.eval_split,
         transform_name=config.eval_transform)
+
+    hierarchy_file = SOURCE_DIR / f'resources/hierarchy/{config.hierarchy}.csv'
+    with open(hierarchy_file) as f:
+        tree, names = hier.make_hierarchy_from_edges(hier.load_edges(f))
+    # Maps annotated label to node in tree.
+    label_nodes = tree.leaf_subset()
+
+    # TODO: Refactor to something like:
+    # tree, names, train_transform, eval_transform = f(tree, names, train_subset)
+    if config.train_subset:
+        # Obtain subset of nodes to keep.
+        subset_file = SOURCE_DIR / f'resources/hierarchy/{config.train_subset}_subset.txt'
+        with open(subset_file) as f:
+            min_subset_names = [line.strip() for line in f]
+        # Take sub-tree of original tree.
+        name_to_node = {name: i for i, name in enumerate(names)}
+        min_subset_nodes = [name_to_node[name] for name in min_subset_names]
+        subtree, subtree_nodes, project_node = hier.subtree(tree, min_subset_nodes)
+        # Create lookup from original label to new label.
+        # Return -1 if original label is excluded (projects to internal node).
+        old_label_nodes = np.array(label_nodes)  # Node index in old tree for old labels.
+        new_label_nodes = subtree.leaf_subset()  # Node index in new tree for new labels.
+        subtree_node_to_new_label = np.full(subtree.num_nodes(), -1)
+        subtree_node_to_new_label[new_label_nodes] = np.arange(len(new_label_nodes))
+        train_label_lookup = subtree_node_to_new_label[project_node[old_label_nodes]]
+        # Find subset of examples in dataset to keep.
+        example_subset, = np.nonzero(train_label_lookup[train_dataset.targets] != -1)
+        train_dataset = torch.utils.data.Subset(train_dataset, example_subset)
+        # Map original label to nearest node in sub-tree during evaluation.
+        eval_label_lookup = project_node[old_label_nodes]
+        # Replace hierarchy with sub-tree.
+        tree = subtree
+        names = [names[i] for i in subtree_nodes]
+        label_nodes = np.array(new_label_nodes)
+        # Note the difference between label_nodes and eval_label_lookup:
+        # dom(label_nodes) = range(subtree.num_leaf_nodes())
+        # dom(eval_label_lookup) = range(original_tree.num_leaf_nodes())
+        train_label_lookup = torch.from_numpy(train_label_lookup)
+        # eval_label_lookup = torch.from_numpy(eval_label_lookup)
+    else:
+        # Leave training labels unmodified.
+        train_label_lookup = None
+        # Map labels to nodes during evaluation.
+        eval_label_lookup = np.array(label_nodes)
+        # eval_label_lookup = torch.from_numpy(label_nodes)
+
     eval_loader = torch.utils.data.DataLoader(
         dataset=eval_dataset,
         batch_size=EVAL_BATCH_SIZE,
@@ -191,11 +230,13 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         pin_memory=True,
         num_workers=LOADER_NUM_WORKERS,
         prefetch_factor=LOADER_PREFETCH_FACTOR)
-
-    hierarchy_file = SOURCE_DIR / f'resources/hierarchy/{config.hierarchy}.csv'
-    with open(hierarchy_file) as f:
-        edges = hier.load_edges(f)
-    tree, node_names = hier.make_hierarchy_from_edges(edges)
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_dataset,
+        batch_size=config.train.batch_size,
+        shuffle=True,
+        pin_memory=True,
+        num_workers=LOADER_NUM_WORKERS,
+        prefetch_factor=LOADER_PREFETCH_FACTOR)
 
     # TODO: Create a factory for this?
     if config.predict == 'flat_softmax':
@@ -257,12 +298,11 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         'depth_pr': depth_metric.value_at_pr,
     }
 
-    # TODO: Decide where to write logs. experiment_dir / 'tensorboard'?
-    writer = tensorboard.SummaryWriter(
+    # Use tensorboard_dir if specified, otherwise use default (logs/...).
+    writer = torch.utils.tensorboard.SummaryWriter(
         FLAGS.tensorboard_dir or None,
         flush_secs=TENSORBOARD_FLUSH_SECS)
 
-    leaf_nodes = tree.leaf_subset()
     depths = tree.depths()
 
     # Loop for one extra epoch to save and evaluate model.
@@ -286,7 +326,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             # Per-example predictions to write to filesystem.
             outputs = {
                 'gt': [],  # Node in hierarchy.
-                'label': [],  # Index in label set (for debug).
+                'original_label': [],  # Index in label set (for debug).
+                # 'label': [],  # Index in label set (for debug).
                 'pred': {method: [] for method in PREDICT_METHODS},
                 'max_leaf_prob': [],
                 'metric': {method: {field: [] for field in metric_fns} for method in PREDICT_METHODS},
@@ -303,27 +344,31 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             net.eval()
             with torch.inference_mode():
                 for minibatch in tqdm.tqdm(eval_loader, f'eval (epoch {epoch})'):
-                    inputs, labels = map(lambda x: x.to(device), minibatch)
+                    inputs, original_labels = minibatch
+                    batch_len = len(inputs)
+                    inputs = inputs.to(device)
                     theta = net(inputs)
-                    loss = loss_fn(theta, labels)
+                    if train_label_lookup is None:
+                        # Can only evaluate loss if all labels are leaf nodes.
+                        labels = original_labels.to(device)
+                        loss = loss_fn(theta, labels)
+                        total_loss += batch_len * loss.item()  # TODO: Avoid assuming mean?
                     prob = pred_fn(theta).cpu().numpy()
-                    labels = labels.cpu().numpy()
-                    batch_len = len(labels)
-                    gt = leaf_nodes[labels]
+                    gt = eval_label_lookup[original_labels]  # was: label_nodes[labels]
                     pred = {}
                     pred['leaf'] = argmax_leaf(tree, prob)
                     pred['majority'] = argmax_value_with_threshold(tree, depths, prob, threshold=0.5)
                     # Truncate predictions where more specific than ground-truth.
                     # (Only necessary if some labels are not leaf nodes.)
-                    # TODO: Need to do for range sequences as well.
-                    # pred = {k: hier.truncate_given_lca(gt, pr, find_lca(gt, pr))
-                    #         for k, pr in pred.items()}
+                    # TODO: Need to do for metric sequences as well!
+                    pred = {k: hier.truncate_given_lca(gt, pr, find_lca(gt, pr))
+                            for k, pr in pred.items()}
                     max_leaf_prob = max_leaf(tree, prob)
 
-                    total_loss += batch_len * loss.item()  # TODO: Avoid assuming mean?
                     example_count += batch_len
                     outputs['gt'].append(gt)
-                    outputs['label'].append(labels)
+                    # outputs['label'].append(labels)
+                    outputs['original_label'].append(original_labels)
                     outputs['max_leaf_prob'].append(max_leaf_prob)
                     full_outputs['prob'].append(prob)
                     for method in PREDICT_METHODS:
@@ -345,9 +390,11 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                         metric_seqs = [metric_fn(gt[i], pred_seqs[i]) for i in range(batch_len)]
                         seq_outputs['metric'][field].extend(metric_seqs)
 
-            mean_loss = total_loss / example_count
-            writer.add_scalar('loss/eval', mean_loss, epoch)
-            logging.info('eval loss: %.5g', mean_loss)
+            if train_label_lookup is None:
+                # Can only evaluate loss if all labels are leaf nodes.
+                mean_loss = total_loss / example_count
+                writer.add_scalar('loss/eval', mean_loss, epoch)
+                logging.info('eval loss: %.5g', mean_loss)
             metric_means = {method: {field: metric_totals[method][field] / example_count
                                      for field in metric_totals[method]} for method in pred}
             for method in pred:
@@ -408,7 +455,12 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         example_count = 0
         net.train()
         for minibatch in tqdm.tqdm(train_loader, f'train (epoch {epoch})'):
-            inputs, labels = map(lambda x: x.to(device), minibatch)
+            inputs, original_labels = minibatch
+            batch_len = len(inputs)
+            labels = (original_labels if train_label_lookup is None
+                      else train_label_lookup[original_labels])
+            # TODO: Assert that all labels are non-negative?
+            inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
             theta = net(inputs)
             loss = loss_fn(theta, labels)
@@ -428,8 +480,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                 prob = pred_fn(theta)
             prob = prob.cpu().numpy()
             labels = labels.cpu().numpy()
-            batch_len = len(labels)
-            gt = leaf_nodes[labels]  # Labels are leaf nodes.
+            gt = label_nodes[labels]  # == eval_label_lookup[original_labels]
             pred = {}
             pred['leaf'] = argmax_leaf(tree, prob)
             pred['majority'] = argmax_value_with_threshold(tree, depths, prob, threshold=0.5)

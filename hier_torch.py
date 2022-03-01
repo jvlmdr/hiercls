@@ -332,7 +332,7 @@ class MultiLabelNLL(nn.Module):
 
         dtype = torch.get_default_dtype()
         self.binary_labels = torch.from_numpy(binary_labels).type(dtype)
-        self.bce_loss = torch.nn.BCEWithLogitsLoss()
+        self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -344,9 +344,12 @@ class MultiLabelNLL(nn.Module):
     def device(self) -> torch.device:
         return self.binary_labels.device
 
-    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        return self.bce_loss(scores,
-                             torch.index_select(self.binary_labels, 0, labels))
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        targets = torch.index_select(self.binary_labels, 0, labels)
+        # Reduce over classes.
+        loss = torch.sum(self.bce_loss(scores, targets), dim=dim)
+        # Take mean over examples.
+        return torch.mean(loss)
 
 
 def multilabel_likelihood(tree: hier.Hierarchy, scores: torch.Tensor, dim=-1):
