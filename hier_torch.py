@@ -4,6 +4,7 @@ from typing import Optional
 import numpy as np
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 import hier
 
@@ -61,6 +62,50 @@ class HierSoftmaxNLL(nn.Module):
             log_prob = torch.index_select(log_prob, -1, self.label_order.to(device))
         nll = -torch.gather(log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
         return torch.mean(nll)
+
+
+class HierSoftmaxCrossEntropy(nn.Module):
+    """Supports integer label targets or distribution targets."""
+
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            with_leaf_targets: bool = False,
+            label_smoothing: float = 0.0):
+        super().__init__()
+        self.label_smoothing = label_smoothing
+        if with_leaf_targets:
+            self.label_order = torch.from_numpy(tree.leaf_subset())
+            self.num_labels = len(self.label_order)
+        else:
+            self.label_order = None
+            self.num_labels = tree.num_nodes()
+        self.hier_cond_log_softmax = HierCondLogSoftmax(tree)
+        self.sum_label_descendants = SumDescendants(tree, subset=self.label_order)
+        self.prior = torch.from_numpy(hier.uniform_leaf(tree))
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        # Do not apply fn to indices because it might convert dtype.
+        self.hier_cond_log_softmax = self.hier_cond_log_softmax._apply(fn)
+        self.sum_label_descendants = self.sum_label_descendants._apply(fn)
+        self.prior = fn(self.prior)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        assert labels.ndim in [scores.ndim, scores.ndim - 1]
+        assert dim % scores.ndim == scores.ndim - 1
+        device = scores.device
+        # Convert labels to one-hot if they are not.
+        if labels.ndim < scores.ndim:
+            labels = F.one_hot(labels, self.num_labels)
+        labels = labels.type(torch.get_default_dtype())
+        q = self.sum_label_descendants(labels)
+        if self.label_smoothing:
+            q = (1 - self.label_smoothing) * q + self.label_smoothing * self.prior
+        log_cond_p = self.hier_cond_log_softmax(scores, dim=-1)
+        xent = torch.sum(q * -log_cond_p, dim=-1)
+        return torch.mean(xent)
 
 
 def hier_cond_log_softmax(
@@ -282,15 +327,16 @@ class Sum(nn.Module):
             self,
             tree: hier.Hierarchy,
             transpose: bool,
-            leaf_only: bool = False,
+            subset: Optional[np.ndarray] = None,
+            # leaf_only: bool = False,
             exclude_root: bool = False,
             strict: bool = False):
         super().__init__()
         # The value matrix[i, j] is true if i is an ancestor of j.
         # Take transpose for sum over descendants.
         matrix = tree.ancestor_mask(strict=strict)
-        if leaf_only:
-            matrix = matrix[:, tree.leaf_mask()]
+        if subset is not None:
+            matrix = matrix[:, subset]
         if exclude_root:
             matrix = matrix[1:, :]
         if transpose:
@@ -313,10 +359,22 @@ class Sum(nn.Module):
         return torch.tensordot(values, self.matrix, dims=1)
 
 
-SumAncestors = partial(Sum, transpose=False, leaf_only=False)
-SumLeafAncestors = partial(Sum, transpose=True, leaf_only=True)
-SumDescendants = partial(Sum, transpose=True, leaf_only=False)
-SumLeafDescendants = partial(Sum, transpose=True, leaf_only=True)
+SumAncestors = partial(Sum, transpose=False)
+SumDescendants = partial(Sum, transpose=True)
+# SumLeafAncestors = partial(Sum, transpose=True, leaf_only=True)
+# SumLeafDescendants = partial(Sum, transpose=True, leaf_only=True)
+
+
+def SumLeafAncestors(
+        tree: hier.Hierarchy,
+        **kwargs):
+    return SumAncestors(tree, subset=tree.leaf_mask(), **kwargs)
+
+
+def SumLeafDescendants(
+        tree: hier.Hierarchy,
+        **kwargs):
+    return SumDescendants(tree, subset=tree.leaf_mask(), **kwargs)
 
 
 class MultiLabelNLL(nn.Module):

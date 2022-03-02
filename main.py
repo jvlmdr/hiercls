@@ -12,6 +12,7 @@ from ml_collections import config_flags
 import numpy as np
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torch import optim
 import torch.utils.data
 import torch.utils.tensorboard
@@ -30,9 +31,8 @@ EVAL_BATCH_SIZE = 256
 SOURCE_DIR = pathlib.Path(__file__).parent
 SAVE_FREQ_EPOCHS = 10
 EVAL_FREQ_EPOCHS = 1
-LOADER_NUM_WORKERS = 16
 LOADER_PREFETCH_FACTOR = 2
-TENSORBOARD_FLUSH_SECS = 5
+TENSORBOARD_FLUSH_SECS = 10
 
 PREDICT_METHODS = ['leaf', 'majority']
 
@@ -49,6 +49,9 @@ flags.DEFINE_string(
     'tensorboard_dir', None,
     'Where to write tensorboard logs. '
     'Logs will be written under a dir for the experiment_id.')
+
+flags.DEFINE_integer(
+    'loader_num_workers', 16, 'Number of data loaders (affects memory footprint).')
 
 flags.DEFINE_bool('resume', False, 'Resume from previous checkpoint.')
 flags.DEFINE_bool('skip_initial_eval', True, 'Skip eval for epoch 0.')
@@ -237,38 +240,44 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         batch_size=EVAL_BATCH_SIZE,
         shuffle=False,
         pin_memory=True,
-        num_workers=LOADER_NUM_WORKERS,
+        num_workers=FLAGS.loader_num_workers,
         prefetch_factor=LOADER_PREFETCH_FACTOR)
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
         batch_size=config.train.batch_size,
         shuffle=True,
         pin_memory=True,
-        num_workers=LOADER_NUM_WORKERS,
+        num_workers=FLAGS.loader_num_workers,
         prefetch_factor=LOADER_PREFETCH_FACTOR)
 
     # TODO: Create a factory for this?
     if config.predict == 'flat_softmax':
         num_outputs = tree.num_leaf_nodes()
-        loss_fn = nn.CrossEntropyLoss()
+        loss_fn = partial(F.cross_entropy, label_smoothing=config.train.label_smoothing)
         pred_fn = partial(
             lambda sum_fn, theta: sum_fn(theta.softmax(dim=-1), dim=-1),
             hier_torch.SumLeafDescendants(tree, strict=False).to(device))
     elif config.predict == 'hier_softmax':
         num_outputs = tree.num_nodes() - 1
         # loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)
-        loss_fn = hier_torch.HierSoftmaxNLL(tree, with_leaf_targets=True).to(device)
+        # loss_fn = hier_torch.HierSoftmaxNLL(tree, with_leaf_targets=True).to(device)
+        loss_fn = hier_torch.HierSoftmaxCrossEntropy(
+            tree, with_leaf_targets=True, label_smoothing=config.train.label_smoothing).to(device)
         pred_fn = partial(
             lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
             # partial(hier_torch.hier_log_softmax, tree)
             hier_torch.HierLogSoftmax(tree).to(device))
     elif config.predict == 'bertinetto_hxe':
+        if config.train.label_smoothing:
+            raise NotImplementedError
         num_outputs = tree.num_nodes() - 1
         loss_fn = hier_torch.BertinettoHXE(tree, config.train.hxe_alpha, with_leaf_targets=True).to(device)
         pred_fn = partial(
             lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
             hier_torch.HierLogSoftmax(tree).to(device))
     elif config.predict == 'multilabel':
+        if config.train.label_smoothing:
+            raise NotImplementedError  # TODO
         num_outputs = tree.num_nodes() - 1
         loss_fn = hier_torch.MultiLabelNLL(tree, with_leaf_targets=True).to(device)
         pred_fn = partial(hier_torch.multilabel_likelihood, tree)
@@ -430,7 +439,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             full_outputs = tree_util.tree_map(np.concatenate, full_outputs, is_leaf=leaf_predicate)
 
             # TODO: Avoid memory consumption when not writing outputs to filesystem.
-            if experiment_dir is not None:
+            if experiment_dir is not None and epoch % SAVE_FREQ_EPOCHS == 0:
                 # Write data to filesystem.
                 # Scalar outputs per example.
                 path = experiment_dir / f'predictions/output-epoch-{epoch_str}.pkl'
@@ -481,7 +490,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             loss = loss_fn(theta, labels)
             loss.backward()
             optimizer.step()
-            if loss.isnan():
+            if loss.isnan():  # Note: This will block.
                 raise ValueError('loss is nan')
             if loss.isinf():
                 raise ValueError('loss is inf')

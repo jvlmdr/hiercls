@@ -22,6 +22,7 @@ def get_config():
             'learning_rate': 0.1,
             'momentum': 0.9,
             'weight_decay': 5e-4,
+            'label_smoothing': 0.0,
             'hxe_alpha': 0.0,
         }),
     })
