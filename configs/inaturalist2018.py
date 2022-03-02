@@ -3,21 +3,21 @@ import ml_collections
 
 def get_config():
     return ml_collections.ConfigDict({
-        'dataset': 'tiny_imagenet',
-        'dataset_root': '/data/manual/tiny_imagenet/',
-        'model': 'torch_resnet18',
+        'dataset': 'inaturalist2018',
+        'dataset_root': '/data/manual/inaturalist2018',
+        'model': 'torch_resnet18_pretrain',
         'train_split': 'train',
         'eval_split': 'val',
-        'hierarchy': 'tiny_imagenet_fiveai',
+        'hierarchy': 'inat18',
         'train_subset': '',
         'predict': 'flat_softmax',
-        'train_transform': 'rand_crop56_hflip',
-        'eval_transform': 'crop56',
+        'train_transform': 'rand_resizedcrop224_hflip',
+        'eval_transform': 'resize256_crop224',
 
         # Config for training algorithm.
         'train': ml_collections.ConfigDict({
             'batch_size': 256,
-            'num_epochs': 100,
+            'num_epochs': 50,
             'warmup_epochs': 0,
             'learning_rate': 0.1,
             'momentum': 0.9,

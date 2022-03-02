@@ -56,9 +56,17 @@ flags.DEFINE_bool('skip_initial_eval', True, 'Skip eval for epoch 0.')
 FLAGS = flags.FLAGS
 
 
+def reset_resnet_fc_(num_outputs: int, model: torchvision.models.ResNet) -> torchvision.models.ResNet:
+    model.fc = nn.Linear(model.fc.in_features, num_outputs, bias=True)
+    return model
+
+
 MODEL_FNS = {
     'torch_resnet18': lambda num_outputs: (
         torchvision.models.resnet18(pretrained=False, num_classes=num_outputs)),
+    'torch_resnet18_pretrain': lambda num_outputs: (
+        reset_resnet_fc_(num_outputs, torchvision.models.resnet18(
+            pretrained=True, num_classes=1000))),
     'torch_resnet50': lambda num_outputs: (
         torchvision.models.resnet50(pretrained=False, num_classes=num_outputs)),
     'kuangliu_resnet18': models.kuangliu_cifar.resnet.ResNet18,
@@ -83,8 +91,9 @@ DATASET_FNS = {
     'inaturalist2018': datasets.INaturalist2018,
 }
 
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
+# normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+#                                  std=[0.229, 0.224, 0.225])
+normalize = transforms.Normalize(0.5, 1.0)
 
 # Non-deterministic transforms have 'rand_' prefix.
 TRANSFORMS = {
@@ -276,6 +285,12 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         weight_decay=config.train.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.train.num_epochs)
+    if config.train.warmup_epochs:
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=0.,  # TODO: Set to 1/n or 1/(n+1)?
+            total_iters=config.train.warmup_epochs)
+        scheduler = torch.optim.lr_scheduler.ChainedScheduler([scheduler, warmup_scheduler])
 
     # Metric functions map gt, pr -> scalar (arrays).
     # TODO: Could avoid recomputation of LCA for each metric.
