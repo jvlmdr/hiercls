@@ -18,7 +18,6 @@ import torch.utils.data
 import torch.utils.tensorboard
 import torchvision
 from torchvision import transforms
-import tqdm
 
 import datasets
 import hier
@@ -26,11 +25,10 @@ import hier_torch
 import metrics
 import models.kuangliu_cifar.resnet
 import models.moit.preact_resnet
+import progmet
 
 EVAL_BATCH_SIZE = 256
 SOURCE_DIR = pathlib.Path(__file__).parent
-SAVE_FREQ_EPOCHS = 10
-EVAL_FREQ_EPOCHS = 1
 LOADER_PREFETCH_FACTOR = 2
 TENSORBOARD_FLUSH_SECS = 10
 
@@ -51,7 +49,13 @@ flags.DEFINE_string(
     'Logs will be written under a dir for the experiment_id.')
 
 flags.DEFINE_integer(
+    'eval_freq', 1, 'Frequency with which to run eval (epochs).')
+flags.DEFINE_integer(
+    'save_freq', 10, 'Frequency with which to save model and results (epochs).')
+flags.DEFINE_integer(
     'loader_num_workers', 16, 'Number of data loaders (affects memory footprint).')
+flags.DEFINE_bool(
+    'loader_pin_memory', False, 'Use page-locked memory in training data loader.')
 
 flags.DEFINE_bool('resume', False, 'Resume from previous checkpoint.')
 flags.DEFINE_bool('skip_initial_eval', True, 'Skip eval for epoch 0.')
@@ -235,18 +239,18 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         eval_label_lookup = np.array(label_nodes)
         # eval_label_lookup = torch.from_numpy(label_nodes)
 
-    eval_loader = torch.utils.data.DataLoader(
-        dataset=eval_dataset,
-        batch_size=EVAL_BATCH_SIZE,
-        shuffle=False,
-        pin_memory=True,
-        num_workers=FLAGS.loader_num_workers,
-        prefetch_factor=LOADER_PREFETCH_FACTOR)
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
         batch_size=config.train.batch_size,
         shuffle=True,
-        pin_memory=True,
+        pin_memory=FLAGS.loader_pin_memory,
+        num_workers=FLAGS.loader_num_workers,
+        prefetch_factor=LOADER_PREFETCH_FACTOR)
+    eval_loader = torch.utils.data.DataLoader(
+        dataset=eval_dataset,
+        batch_size=EVAL_BATCH_SIZE,
+        shuffle=False,
+        pin_memory=False,  # FLAGS.loader_pin_memory,
         num_workers=FLAGS.loader_num_workers,
         prefetch_factor=LOADER_PREFETCH_FACTOR)
 
@@ -295,9 +299,10 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.train.num_epochs)
     if config.train.warmup_epochs:
+        # Multiplier will be 1/(n+1), 2/(n+1), ..., n/(n+1), 1, 1, 1.
         warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            start_factor=0.,  # TODO: Set to 1/n or 1/(n+1)?
+            start_factor=1. / (config.train.warmup_epochs + 1),
             total_iters=config.train.warmup_epochs)
         scheduler = torch.optim.lr_scheduler.ChainedScheduler([scheduler, warmup_scheduler])
 
@@ -333,14 +338,14 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     for epoch in range(config.train.num_epochs + 1):
         epoch_str = f'{epoch:04d}'
 
-        if experiment_dir is not None and epoch % SAVE_FREQ_EPOCHS == 0:
+        if experiment_dir is not None and epoch % FLAGS.save_freq == 0:
             # Save model and results to filesystem.
             checkpoint_file = experiment_dir / f'checkpoints/epoch-{epoch_str}.pth'
             logging.info('write checkpoint: %s', checkpoint_file)
             checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
             torch.save(net.state_dict(), checkpoint_file)
 
-        if (epoch > 0 and epoch % EVAL_FREQ_EPOCHS == 0) or (epoch == 0 and not FLAGS.skip_initial_eval):
+        if (epoch > 0 and epoch % FLAGS.eval_freq == 0) or (epoch == 0 and not FLAGS.skip_initial_eval):
             find_lca = hier.FindLCA(tree)
 
             # Counts and totals to obtain means.
@@ -367,7 +372,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
             net.eval()
             with torch.inference_mode():
-                for minibatch in tqdm.tqdm(eval_loader, f'eval (epoch {epoch})'):
+                meter = progmet.ProgressMeter(f'eval epoch {epoch}', interval_time=5, num_div=5)
+                for minibatch in meter(eval_loader):
                     inputs, original_labels = minibatch
                     batch_len = len(inputs)
                     inputs = inputs.to(device)
@@ -439,7 +445,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             full_outputs = tree_util.tree_map(np.concatenate, full_outputs, is_leaf=leaf_predicate)
 
             # TODO: Avoid memory consumption when not writing outputs to filesystem.
-            if experiment_dir is not None and epoch % SAVE_FREQ_EPOCHS == 0:
+            if experiment_dir is not None and epoch % FLAGS.save_freq == 0:
                 # Write data to filesystem.
                 # Scalar outputs per example.
                 path = experiment_dir / f'predictions/output-epoch-{epoch_str}.pkl'
@@ -478,7 +484,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         step_count = 0
         example_count = 0
         net.train()
-        for minibatch in tqdm.tqdm(train_loader, f'train (epoch {epoch})'):
+        meter = progmet.ProgressMeter(f'train epoch {epoch}', interval_time=5, num_div=5)
+        for minibatch in meter(train_loader):
             inputs, original_labels = minibatch
             batch_len = len(inputs)
             labels = (original_labels if train_label_lookup is None
