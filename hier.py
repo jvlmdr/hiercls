@@ -4,6 +4,7 @@ import itertools
 from typing import Callable, Collection, Dict, List, Sequence, TextIO, Tuple
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 
 class Hierarchy:
@@ -54,20 +55,39 @@ class Hierarchy:
         return np.count_nonzero(np.logical_not(self.leaf_mask()))
 
     def depths(self) -> np.ndarray:
-        n = len(self._parents)
-        d = np.zeros([n], dtype=int)
-        for i, j in self.edges():
-            assert i < j, 'require edges in topological order'
-            d[j] = d[i] + 1
-        return d
+        # n = len(self._parents)
+        # d = np.zeros([n], dtype=int)
+        # for i, j in self.edges():
+        #     assert i < j, 'require edges in topological order'
+        #     d[j] = d[i] + 1
+        # return d
+        return self.accumulate_ancestors(np.add, (self._parents >= 0).astype(int))
 
     def num_leaf_descendants(self) -> np.ndarray:
-        n = len(self._parents)
-        c = self.leaf_mask().astype(int)
-        for i, j in reversed(self.edges()):
-            assert i < j, 'require edges in topological order'
-            c[i] += c[j]
-        return c
+        # c = self.leaf_mask().astype(int)
+        # for i, j in reversed(self.edges()):
+        #     assert i < j, 'require edges in topological order'
+        #     c[i] += c[j]
+        # return c
+        return self.accumulate_descendants(np.add, self.leaf_mask().astype(int))
+
+    def max_heights(self) -> np.ndarray:
+        heights = np.zeros_like(self.depths())
+        # for i, j in reversed(self.edges()):
+        #     heights[i] = max(heights[i], heights[j] + 1)
+        # return heights
+        return self.accumulate_descendants(lambda u, v: max(u, v + 1), heights)
+
+    def min_heights(self) -> np.ndarray:
+        # Initialize leaf nodes to zero, internal nodes to upper bound.
+        #   height + depth <= max_depth
+        #   height <= max_depth - depth
+        depths = self.depths()
+        heights = np.where(self.leaf_mask(), 0, depths.max() - depths)
+        # for i, j in reversed(self.edges()):
+        #     heights[i] = min(heights[i], heights[j] + 1)
+        # return heights
+        return self.accumulate_descendants(lambda u, v: min(u, v + 1), heights)
 
     # def accumulate_ancestors_inplace(self, func: Callable, values: MutableSequence):
     #     # Start from root and move down.
@@ -79,21 +99,16 @@ class Hierarchy:
     #     for i, j in reversed(self.edges()):
     #         values[i] = func(values[i], values[j])
 
-    def accumulate_ancestors(self, func: Callable, values: Sequence) -> List:
+    def accumulate_ancestors(self, func: Callable, values: ArrayLike) -> np.ndarray:
         # Start from root and move down.
-        n = len(self._parents)
-        partials = [None] * n
-        partials[0] = values[0]
+        partials = np.array(values)
         for i, j in self.edges():
-            partials[j] = func(partials[i], values[j])
+            partials[j] = func(partials[i], partials[j])
         return partials
 
-    def accumulate_descendants(self, func: Callable, values: Sequence) -> List:
+    def accumulate_descendants(self, func: Callable, values: ArrayLike) -> np.ndarray:
         # Start from leaves and move up.
-        n = len(self._parents)
-        partials = [None] * n
-        for i in range(n):
-            partials[i] = values[i]
+        partials = np.array(values)
         for i, j in reversed(self.edges()):
             partials[i] = func(partials[i], partials[j])
         return partials
@@ -204,11 +219,12 @@ def uniform_leaf(tree: Hierarchy) -> np.ndarray:
     is_ancestor = tree.ancestor_mask(strict=False)
     is_leaf = tree.leaf_mask()
     num_leaf_descendants = is_ancestor[:, is_leaf].sum(axis=1)
-    return (1. / is_leaf.sum()) * num_leaf_descendants
+    return num_leaf_descendants / is_leaf.sum()
 
 
 def uniform_cond(tree: Hierarchy) -> np.ndarray:
     """Returns a uniform distribution over child nodes at each conditional."""
+    # TODO: Ensure exact.
     node_to_num_children = {k: len(v) for k, v in tree.children().items()}
     num_children = np.asarray([node_to_num_children.get(x, 0) for x in range(tree.num_nodes())])
     parent_index = tree.parents()

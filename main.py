@@ -71,11 +71,14 @@ def reset_resnet_fc_(num_outputs: int, model: torchvision.models.ResNet) -> torc
 MODEL_FNS = {
     'torch_resnet18': lambda num_outputs: (
         torchvision.models.resnet18(pretrained=False, num_classes=num_outputs)),
-    'torch_resnet18_pretrain': lambda num_outputs: (
-        reset_resnet_fc_(num_outputs, torchvision.models.resnet18(
-            pretrained=True, num_classes=1000))),
+    'torch_resnet18_pretrain': lambda num_outputs: reset_resnet_fc_(
+        num_outputs,
+        torchvision.models.resnet18(pretrained=True, num_classes=1000)),
     'torch_resnet50': lambda num_outputs: (
         torchvision.models.resnet50(pretrained=False, num_classes=num_outputs)),
+    'torch_resnet50_pretrain': lambda num_outputs: reset_resnet_fc_(
+        num_outputs,
+        torchvision.models.resnet50(pretrained=True, num_classes=1000)),
     'kuangliu_resnet18': models.kuangliu_cifar.resnet.ResNet18,
     'moit_preact_resnet18': lambda num_outputs: (
         models.moit.preact_resnet.PreActResNet18(num_outputs, mode='')),
@@ -332,7 +335,9 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         FLAGS.tensorboard_dir or None,
         flush_secs=TENSORBOARD_FLUSH_SECS)
 
-    depths = tree.depths()
+    is_leaf = tree.leaf_mask()
+    specificity = -tree.num_leaf_descendants()
+    node_mask = (tree.num_children() != 1)
 
     # Loop for one extra epoch to save and evaluate model.
     for epoch in range(config.train.num_epochs + 1):
@@ -386,14 +391,15 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     prob = pred_fn(theta).cpu().numpy()
                     gt = eval_label_lookup[original_labels]  # was: label_nodes[labels]
                     pred = {}
-                    pred['leaf'] = argmax_leaf(tree, prob)
-                    pred['majority'] = argmax_value_with_threshold(tree, depths, prob, threshold=0.5)
+                    pred['leaf'] = argmax_where(prob, is_leaf)
+                    max_leaf_prob = max_where(prob, is_leaf)
+                    pred['majority'] = lexargmin_where(np.broadcast_arrays(-prob, -specificity),
+                                                       (prob > 0.5) & node_mask)
                     # Truncate predictions where more specific than ground-truth.
                     # (Only necessary if some labels are not leaf nodes.)
                     # TODO: Need to do for metric sequences as well!
                     pred = {k: hier.truncate_given_lca(gt, pr, find_lca(gt, pr))
                             for k, pr in pred.items()}
-                    max_leaf_prob = max_leaf(tree, prob)
 
                     example_count += batch_len
                     outputs['gt'].append(gt)
@@ -409,7 +415,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                             outputs['metric'][method][field].append(metric_value)
                             metric_totals[method][field] += metric_value.sum()
 
-                    pred_seqs = [sorted_above_threshold(p, threshold=0.5) for p in prob]
+                    pred_seqs = [prediction_sequence(specificity, p, threshold=0.5, condition=node_mask)
+                                 for p in prob]
                     # TODO: Could vectorize if necessary.
                     prob_seqs = [prob[i, pred_i] for i, pred_i in enumerate(pred_seqs)]
                     seq_outputs['pred'].extend(pred_seqs)
@@ -513,8 +520,9 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             labels = labels.cpu().numpy()
             gt = label_nodes[labels]  # == eval_label_lookup[original_labels]
             pred = {}
-            pred['leaf'] = argmax_leaf(tree, prob)
-            pred['majority'] = argmax_value_with_threshold(tree, depths, prob, threshold=0.5)
+            pred['leaf'] = argmax_where(prob, is_leaf)
+            pred['majority'] = lexargmin_where(np.broadcast_arrays(-prob, -specificity),
+                                               (prob > 0.5) & node_mask)
             for method in PREDICT_METHODS:
                 for field in metric_fns:
                     metric_fn = metric_fns[field]
@@ -541,30 +549,110 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         scheduler.step()
 
 
+def argmax_where(
+        value: np.ndarray,
+        condition: np.ndarray,
+        axis: int = -1,
+        keepdims: bool = False) -> np.ndarray:
+    # Will raise an exception if not np.all(np.any(condition, axis=axis)).
+    return np.nanargmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
+
+
+def max_where(
+        value: np.ndarray,
+        condition: np.ndarray,
+        axis: int = -1,
+        keepdims: bool = False) -> np.ndarray:
+    assert np.all(np.any(condition, axis=axis)), 'require at least one valid element'
+    return np.nanmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
+
+
+def lexargmin(keys: Tuple[np.ndarray, ...], axis: int = -1) -> np.ndarray:
+    order = np.lexsort(keys, axis=axis)
+    return np.take(order, 0, axis=axis)
+
+
+def lexargmin_where(
+        keys: Tuple[np.ndarray, ...],
+        condition: np.ndarray,
+        axis: int = -1,
+        keepdims: bool = False,
+        ) -> np.ndarray:
+    # TODO: Make more efficient (linear rather than log-linear).
+    assert np.all(np.any(condition, axis=axis)), 'require at least one valid element'
+    order = np.lexsort(keys, axis=axis)
+    # Take first element that satisfies condition.
+    first_valid = np.argmax(np.take_along_axis(condition, order, axis=axis), axis=axis, keepdims=True)
+    result = np.take_along_axis(order, first_valid, axis=axis)
+    if not keepdims:
+        result = np.squeeze(result, axis=axis)
+    return result
+
+
 def sorted_above_threshold(p: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+    """Returns decreasing order of p such that threshold is satisfied.
+
+    Equivalent to prediction_sequence when p is hierarchical and threshold >= 0.5.
+    """
     assert p.ndim == 1
     subset, = np.nonzero(p > threshold)
     order = np.argsort(-p[subset])
     return subset[order]
 
 
-def argmax_leaf(tree: hier.Hierarchy, prob: np.ndarray, axis: int = -1) -> np.ndarray:
-    # TODO: Avoid excessive calls to leaf_mask()?
-    return np.nanargmax(np.where(tree.leaf_mask(), prob, np.nan), axis=axis)
+def prediction_sequence(
+        specificity: np.ndarray,
+        p: np.ndarray,
+        threshold: Optional[float] = None,
+        condition: Optional[np.ndarray] = None,
+        ) -> np.ndarray:
+    # TODO: Incorporate p > threshold into condition?
+    assert p.ndim == 1
+    # Order by confidence (desc) then by specificity (desc).
+    # Note that np.lexsort() starts with the last key.
+    order = np.lexsort((-specificity, -p))
+
+    valid = np.ones(p.shape, dtype=bool)
+    if threshold is not None:
+        valid &= (p > threshold)
+    if condition is not None:
+        valid &= condition
+    assert np.any(valid), 'require at least one valid element'
+    # Keep only i such that valid[i] is true.
+    order = order[valid[order]]
+
+    # Guaranteed that: i < j implies p[i] >= p[j]
+    # Want also: i < j implies specificity[i] <= specificity[j]
+    # That is, we have decreasing scores but increasing specificity.
+    ordered_specificity = specificity[order]
+    max_specificity = np.maximum.accumulate(ordered_specificity)
+    # keep = ordered_specificity >= max_specificity
+    # Keep only the first element which satisfies the non-strict inequality.
+    keep = np.concatenate([[True], ordered_specificity[1:] > max_specificity[:-1]])
+    return order[keep]
 
 
-def max_leaf(tree: hier.Hierarchy, prob: np.ndarray, axis: int = -1) -> np.ndarray:
-    return np.nanmax(np.where(tree.leaf_mask(), prob, np.nan), axis=axis)
+def pool_operating_points(example_scores, example_metrics):
+    # Obtain order of scores.
+    step_scores = np.concatenate([seq[1:] for seq in example_scores])
+    step_order = np.argsort(-step_scores)
+    step_scores = step_scores[step_order]
+    metric_seqs = {}
+    for field in example_metrics:
+        # Get metric sequence for each example.
+        example_seqs = example_metrics[field]
+        example_seqs = [seq.astype(float) for seq in example_seqs]
+        total_init = np.sum([seq[0] for seq in example_seqs])
+        total_deltas = np.concatenate([np.diff(seq) for seq in example_seqs])[step_order]
+        metric_seqs[field] = total_init + cumsum_with_zero(total_deltas)
+    return metric_seqs, step_scores
 
 
-def argmax_value_with_threshold(
-        tree: hier.Hierarchy,
-        value: np.ndarray,
-        prob: np.ndarray,
-        threshold: float = 0.5,
-        axis: int = -1) -> np.ndarray:
-    assert axis == -1
-    return np.nanargmax(np.where(prob > threshold, value, np.nan), axis=-1)
+def cumsum_with_zero(x: np.ndarray, axis: int = 0) -> np.ndarray:
+    ndim = x.ndim
+    pad_width = [(0, 0)] * ndim
+    pad_width[axis] = (1, 0)
+    return np.cumsum(np.pad(x, pad_width, 'constant'), axis=axis)
 
 
 if __name__ == '__main__':

@@ -115,11 +115,17 @@ class LCAMetric:
 
     def recall(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
         lca = self.find_lca(gt, pr)
-        return self.value[lca] / self.value[gt]
+        gt_value = self.value[gt]
+        lca_value = self.value[lca]
+        with np.errstate(invalid='ignore'):
+            return np.where((lca_value == 0) & (gt_value == 0), 1.0, lca_value / gt_value)
 
     def precision(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
         lca = self.find_lca(gt, pr)
-        return self.value[lca] / self.value[pr]
+        pr_value = self.value[pr]
+        lca_value = self.value[lca]
+        with np.errstate(invalid='ignore'):
+            return np.where((lca_value == 0) & (pr_value == 0), 1.0, lca_value / pr_value)
 
 
 def UniformLeafInfoMetric(tree: hier.Hierarchy) -> LCAMetric:
