@@ -581,8 +581,9 @@ def lexargmin_where(
     # TODO: Make more efficient (linear rather than log-linear).
     assert np.all(np.any(condition, axis=axis)), 'require at least one valid element'
     order = np.lexsort(keys, axis=axis)
-    # Take first element that satisfies condition.
-    first_valid = np.argmax(np.take_along_axis(condition, order, axis=axis), axis=axis, keepdims=True)
+    # Take first element in order that satisfies condition.
+    first_valid = np.argmax(np.take_along_axis(condition, order, axis=axis),
+                            axis=axis, keepdims=True)
     result = np.take_along_axis(order, first_valid, axis=axis)
     if not keepdims:
         result = np.squeeze(result, axis=axis)
