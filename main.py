@@ -280,7 +280,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         num_outputs = tree.num_nodes() - 1
         loss_fn = hier_torch.BertinettoHXE(tree, config.train.hxe_alpha, with_leaf_targets=True).to(device)
         pred_fn = partial(
-            lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
+            lambda log_softmax_fn, theta: torch.exp(log_softmax_fn(theta)),
             hier_torch.HierLogSoftmax(tree).to(device))
     elif config.predict == 'multilabel':
         if config.train.label_smoothing:
@@ -288,6 +288,14 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         num_outputs = tree.num_nodes() - 1
         loss_fn = hier_torch.MultiLabelNLL(tree, with_leaf_targets=True).to(device)
         pred_fn = partial(hier_torch.multilabel_likelihood, tree)
+    # elif config.predict == 'hier_sigmoid':
+    #     if config.train.label_smoothing:
+    #         raise NotImplementedError  # TODO
+    #     num_outputs = tree.num_nodes() - 1
+    #     loss_fn = hier_torch.HierSigmoidNLL(tree, with_leaf_targets=True).to(device)
+    #     pred_fn = partial(
+    #         lambda log_sigmoid_fn, theta: torch.exp(log_sigmoid_fn(theta)),
+    #         hier_torch.HierLogSigmoid(tree).to(device))
     else:
         raise ValueError('unknown predict method', config.predict)
 
