@@ -401,7 +401,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     pred = {}
                     pred['leaf'] = argmax_where(prob, is_leaf)
                     max_leaf_prob = max_where(prob, is_leaf)
-                    pred['majority'] = lexargmin_where(np.broadcast_arrays(-prob, -specificity),
+                    pred['majority'] = arglexmin_where(np.broadcast_arrays(-prob, -specificity),
                                                        (prob > 0.5) & node_mask)
                     # Truncate predictions where more specific than ground-truth.
                     # (Only necessary if some labels are not leaf nodes.)
@@ -529,7 +529,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             gt = label_nodes[labels]  # == eval_label_lookup[original_labels]
             pred = {}
             pred['leaf'] = argmax_where(prob, is_leaf)
-            pred['majority'] = lexargmin_where(np.broadcast_arrays(-prob, -specificity),
+            pred['majority'] = arglexmin_where(np.broadcast_arrays(-prob, -specificity),
                                                (prob > 0.5) & node_mask)
             for method in PREDICT_METHODS:
                 for field in metric_fns:
@@ -575,12 +575,12 @@ def max_where(
     return np.nanmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
 
 
-def lexargmin(keys: Tuple[np.ndarray, ...], axis: int = -1) -> np.ndarray:
+def arglexmin(keys: Tuple[np.ndarray, ...], axis: int = -1) -> np.ndarray:
     order = np.lexsort(keys, axis=axis)
     return np.take(order, 0, axis=axis)
 
 
-def lexargmin_where(
+def arglexmin_where(
         keys: Tuple[np.ndarray, ...],
         condition: np.ndarray,
         axis: int = -1,
@@ -590,6 +590,8 @@ def lexargmin_where(
     assert np.all(np.any(condition, axis=axis)), 'require at least one valid element'
     order = np.lexsort(keys, axis=axis)
     # Take first element in order that satisfies condition.
+    # TODO: Would be faster to take subset and then sort?
+    # Would this break the vectorization?
     first_valid = np.argmax(np.take_along_axis(condition, order, axis=axis),
                             axis=axis, keepdims=True)
     result = np.take_along_axis(order, first_valid, axis=axis)
@@ -615,20 +617,22 @@ def prediction_sequence(
         threshold: Optional[float] = None,
         condition: Optional[np.ndarray] = None,
         ) -> np.ndarray:
-    # TODO: Incorporate p > threshold into condition?
     assert p.ndim == 1
-    # Order by confidence (desc) then by specificity (desc).
-    # Note that np.lexsort() starts with the last key.
-    order = np.lexsort((-specificity, -p))
+    assert specificity.ndim == 1
 
-    valid = np.ones(p.shape, dtype=bool)
+    is_valid = np.ones(p.shape, dtype=bool)
     if threshold is not None:
-        valid &= (p > threshold)
+        is_valid &= (p > threshold)
     if condition is not None:
-        valid &= condition
-    assert np.any(valid), 'require at least one valid element'
-    # Keep only i such that valid[i] is true.
-    order = order[valid[order]]
+        is_valid &= condition
+    assert np.any(is_valid), 'require at least one valid element'
+
+    # Order by confidence (desc) then by specificity (desc).
+    # Note that np.lexsort() orders first by the last key.
+    # (Performs stable sort from first key to last key.)
+    order = np.lexsort((-specificity[is_valid], -p[is_valid]))
+    valid_inds, = np.nonzero(is_valid)
+    order = valid_inds[order]
 
     # Guaranteed that: i < j implies p[i] >= p[j]
     # Want also: i < j implies specificity[i] <= specificity[j]
