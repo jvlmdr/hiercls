@@ -34,6 +34,7 @@ class INaturalist2018(torchvision.datasets.VisionDataset):
         image_to_fname = {im['id']: im['file_name'] for im in dataset['images']}
         self.samples = [(image_to_fname[ann['image_id']], ann['category_id'])
                         for ann in dataset['annotations']]
+        self.targets = [target for _, target in self.samples]
 
     def __getitem__(self, index: int):
         fname, target = self.samples[index]

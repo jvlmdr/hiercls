@@ -33,3 +33,25 @@ def unique_in_order(elems: Iterable[Hashable]) -> Iterable[Hashable]:
             continue
         yield x
         seen.add(x)
+
+
+def remove_trivial(g: nx.DiGraph, root) -> nx.DiGraph:
+    h = nx.DiGraph()
+
+    def visit(node, parent):
+        children = list(g.successors(node))
+        if not children:
+            h.add_edge(parent, node)
+        elif len(children) == 1:
+            # Skip over only child.
+            child, = children
+            visit(child, parent)
+        else:
+            # Multiple children. Keep this node.
+            h.add_edge(parent, node)
+            for child in children:
+                visit(child, node)
+
+    for node in g.successors(root):
+        visit(node, root)
+    return h

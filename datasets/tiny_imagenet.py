@@ -59,6 +59,7 @@ class FromList(torchvision.datasets.VisionDataset):
         self.classes = load_wnids(os.path.join(root, 'wnids.txt'))
         self.class_to_idx = {x: i for i, x in enumerate(self.classes)}
         self.samples = list(self.load_samples())
+        self.targets = [target for _, target in self.samples]
 
     def __getitem__(self, index: int):
         path, target = self.samples[index]

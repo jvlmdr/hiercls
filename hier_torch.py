@@ -9,6 +9,77 @@ import torch.nn.functional as F
 import hier
 
 
+def flat_log_softmax(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        dim: int = -1) -> torch.Tensor:
+    assert dim in (-1, scores.ndim - 1)
+    logp_leaf = F.log_softmax(scores, dim=-1)
+    # The value is_ancestor[i, j] is true if node i is an ancestor of node j.
+    is_ancestor = tree.ancestor_mask(strict=False)
+    is_leaf = tree.leaf_mask()
+    # The value is_ancestor_leaf[i, k] is true if node i is an ancestor of leaf k.
+    is_ancestor_leaf = is_ancestor[:, is_leaf]
+    # Obtain logp for all leaf descendants, -inf for other nodes.
+    is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf).to(scores.device)
+    logp_descendants = torch.where(
+        is_ancestor_leaf, logp_leaf.unsqueeze(-2),
+        torch.tensor(-torch.inf, device=scores.device))
+    return torch.logsumexp(logp_descendants, dim=-1)
+
+
+class FlatLogSoftmax(nn.Module):
+
+    def __init__(self, tree):
+        super().__init__()
+        # The value is_ancestor[i, j] is true if node i is an ancestor of node j.
+        is_ancestor = tree.ancestor_mask(strict=False)
+        # The value is_ancestor_leaf[i, k] is true if node i is an ancestor of leaf k.
+        is_ancestor_leaf = is_ancestor[:, tree.leaf_mask()]
+
+        # TODO: May be important to avoid copying this to the device.
+        # However, overriding _apply() will change the dtype.
+        self.is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf)
+
+    def forward(self, scores: torch.Tensor) -> torch.Tensor:
+        logp_leaf = F.log_softmax(scores, dim=-1)
+        # Obtain logp for leaf descendants, -inf for other nodes.
+        # TODO: This is hacky. Would prefer not to mutate object here.
+        self.is_ancestor_leaf = self.is_ancestor_leaf.to(scores.device)
+        logp_descendants = torch.where(
+            self.is_ancestor_leaf,
+            logp_leaf.unsqueeze(-2),
+            torch.tensor(-torch.inf, device=scores.device))
+        return torch.logsumexp(logp_descendants, dim=-1)
+
+
+class FlatLogSoftmaxNLL(nn.Module):
+
+    def __init__(self, tree):
+        super().__init__()
+        # The value is_ancestor[i, j] is true if node i is an ancestor of node j.
+        is_ancestor = tree.ancestor_mask(strict=False)
+        # The value is_ancestor_leaf[i, k] is true if node i is an ancestor of leaf k.
+        is_ancestor_leaf = is_ancestor[:, tree.leaf_mask()]
+
+        # TODO: May be important to avoid copying this to the device.
+        # However, overriding _apply() will change the dtype.
+        self.is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf)
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        logp_leaf = F.log_softmax(scores, dim=-1)
+        # Obtain logp for leaf descendants, -inf for other nodes.
+        # TODO: This is hacky. Would prefer not to mutate object here.
+        self.is_ancestor_leaf = self.is_ancestor_leaf.to(scores.device)
+        logp_descendants = torch.where(
+            self.is_ancestor_leaf,
+            logp_leaf.unsqueeze(-2),
+            torch.tensor(-torch.inf, device=scores.device))
+        logp = torch.logsumexp(logp_descendants, dim=-1)
+        nll = -torch.gather(logp, -1, labels.unsqueeze(-1))
+        return torch.mean(nll)
+
+
 def hier_softmax_nll(
         tree: hier.Hierarchy,
         scores: torch.Tensor,

@@ -1,14 +1,18 @@
+import collections
+import csv
 from functools import partial
+import gzip
 import json
 import pathlib
 import pickle
-from typing import Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from absl import app
 from absl import flags
 from absl import logging
 from jax import tree_util
 from ml_collections import config_flags
+import ml_collections
 import numpy as np
 import torch
 from torch import nn
@@ -148,7 +152,7 @@ TRANSFORMS = {
 }
 
 
-def make_dataset(name, root, split, transform_name):
+def make_base_dataset(name, root, split, transform_name):
     try:
         dataset_fn = DATASET_FNS[name]
     except KeyError:
@@ -183,64 +187,216 @@ def main(_):
     train(config, experiment_dir)
 
 
-def train(config, experiment_dir: Optional[pathlib.Path]):
-    device = torch.device('cuda')
+class LabelOrder:
 
-    train_dataset = make_dataset(
+    def __init__(self, kind: str, custom_order: Sequence[int] = None):
+        assert kind in ('leaf', 'node', 'custom')
+        self.kind = kind
+        # The custom order is None iff the kind is not 'custom'.
+        assert (custom_order is None) == (kind != 'custom')
+        self.custom_order = np.array(custom_order)
+
+    def nodes(self, tree: hier.Hierarchy) -> np.ndarray:
+        if self.kind == 'leaf':
+            return tree.leaf_subset()
+        elif self.kind == 'node':
+            return np.arange(tree.num_nodes())
+        elif self.kind == 'custom':
+            assert np.all(self.custom_order < tree.num_nodes())
+            return np.array(self.custom_order)
+        else:
+            raise ValueError('unknown kind')
+
+    def __eq__(a, b):
+        assert isinstance(b, LabelOrder)
+        return (a.kind == b.kind and np.array_equal(a.custom_order, b.custom_order))
+
+
+def _reverse_lookup(table: Sequence, values: Sequence, default=None) -> List:
+    inv = {x: i for i, x in enumerate(table)}
+    return [inv.get(x, default) for x in values]
+
+
+def _np_reverse_lookup_int(table: np.ndarray, values: np.ndarray, default=None, n=None) -> np.ndarray:
+    assert table.ndim == 1
+    if np.size(values) == 0:
+        return np.empty(values.shape, dtype=int)
+    if default is None:
+        # Require that every value is present in the table.
+        assert np.all(np.isin(values, table))
+        default = -1
+    if n is None:
+        n = np.max(table) + 1
+    else:
+        assert np.all(table < n)
+    assert np.all(table >= 0)
+    inv = np.full(n, default, dtype=int)
+    inv[table] = np.arange(len(table))
+    return inv[values]
+
+
+LabelMap = collections.namedtuple('LabelMap', ['to_node', 'to_target'])
+
+
+def make_datasets(config: ml_collections.ConfigDict):
+    """Configures datasets, tree, labels.
+
+    The resulting datasets may have different label spaces.
+    Returns one label->node map each for the train and eval datasets
+    as well as a label->target map for the train dataset.
+    If the label->node maps are equal, loss can be evaluated during eval.
+
+    If `train_with_leaf_targets` is True then the loss function will receive leaf indices.
+    In this case, it is assumed that the dataset contains only leaf-node labels.
+    If `train_with_leaf_targets` is False, then the loss function will receive node indices.
+    The targets in the dataset match what the loss function will receive.
+
+    If `label_order` is specified (and `train_with_leaf_targets` is False), then a mapping
+    from labels to nodes will be taken from a corresponding file.
+    This is required for e.g. ImageNet21k.
+
+    If `train_subset` is True, then a subtree is derived that contains those nodes.
+    If `keep_examples` is False, then the examples are excluded.
+    If `keep_examples` is True, then the examples are kept with projected labels.
+    This requires that `train_with_leaf_targets` is False.
+
+    If `train_labels` is specified, the labels in the dataset will be replaced
+    with labels from a corresponding file.
+    This is used for label degradation.
+    TODO: Maybe do this at runtime instead of from file?
+    """
+
+    tree, node_names = load_hierarchy(config.hierarchy)
+
+    # Start with the original mapping from labels to nodes. In most cases,
+    # this is the leaf nodes in the order that they appear in the edge list.
+    # However, some datasets may specify labels in a different order, e.g. ImageNet21k.
+    # TODO: Add some way to set this.
+    # TODO: Permit to train with original labels even if not leaf nodes?
+    label_to_node = tree.leaf_subset()
+
+    train_dataset = make_base_dataset(
         config.dataset,
         root=config.dataset_root,
         split=config.train_split,
         transform_name=config.train_transform)
-    eval_dataset = make_dataset(
+    eval_dataset = make_base_dataset(
         config.dataset,
         root=config.dataset_root,
         split=config.eval_split,
         transform_name=config.eval_transform)
 
-    hierarchy_file = SOURCE_DIR / f'resources/hierarchy/{config.hierarchy}.csv'
-    with open(hierarchy_file) as f:
-        tree, names = hier.make_hierarchy_from_edges(hier.load_edges(f))
-    # Maps annotated label to node in tree.
-    label_nodes = tree.leaf_subset()
+    if config.train_labels and config.train_subset:
+        raise ValueError('cannot both override labels and take subset of classes')
 
-    # TODO: Refactor to something like:
-    # tree, names, train_transform, eval_transform = f(tree, names, train_subset)
     if config.train_subset:
-        # Obtain subset of nodes to keep.
-        subset_file = SOURCE_DIR / f'resources/hierarchy/{config.train_subset}_subset.txt'
-        with open(subset_file) as f:
-            min_subset_names = [line.strip() for line in f]
-        # Take sub-tree of original tree.
-        name_to_node = {name: i for i, name in enumerate(names)}
-        min_subset_nodes = [name_to_node[name] for name in min_subset_names]
-        subtree, subtree_nodes, project_node = hier.subtree(tree, min_subset_nodes)
-        # Create lookup from original label to new label.
-        # Return -1 if original label is excluded (projects to internal node).
-        old_label_nodes = np.array(label_nodes)  # Node index in old tree for old labels.
-        new_label_nodes = subtree.leaf_subset()  # Node index in new tree for new labels.
-        subtree_node_to_new_label = np.full(subtree.num_nodes(), -1)
-        subtree_node_to_new_label[new_label_nodes] = np.arange(len(new_label_nodes))
-        train_label_lookup = subtree_node_to_new_label[project_node[old_label_nodes]]
-        # Find subset of examples in dataset to keep.
-        example_subset, = np.nonzero(train_label_lookup[train_dataset.targets] != -1)
-        train_dataset = torch.utils.data.Subset(train_dataset, example_subset)
-        # Map original label to nearest node in sub-tree during evaluation.
-        eval_label_lookup = project_node[old_label_nodes]
-        # Replace hierarchy with sub-tree.
+        # Take subtree using the subset of nodes.
+        assert hasattr(train_dataset, 'targets'), 'need targets to take class subset'
+        min_node_subset = load_node_subset(config.train_subset, node_names)
+        subtree, node_subset, project_to_subtree = hier.subtree(tree, min_node_subset)
+        if not config.keep_examples:
+            # Take a subset of the train_dataset.
+            # For each example, check whether the node was kept in the subtree.
+            example_subset, = np.nonzero(np.isin(label_to_node[train_dataset.targets], node_subset))
+            train_dataset = torch.utils.data.Subset(train_dataset, example_subset)
+        # Remap the labels in the training set for the subtree.
+        if config.train_with_leaf_targets:
+            # We still want to use leaf targets for training.
+            # This is only possible if we exclude the examples from other classes.
+            assert not config.keep_examples, 'cannot keep examples and use leaf targets'
+            # During eval, we always keep all examples.
+            # This means that we cannot evaluate the loss during eval.
+            train_label_map = LabelMap(
+                to_node=project_to_subtree[label_to_node],
+                to_target=_np_reverse_lookup_int(
+                    subtree.leaf_subset(), project_to_subtree[label_to_node], default=-1))
+            eval_label_map = LabelMap(
+                to_node=project_to_subtree[label_to_node],
+                to_target=None)
+        else:
+            train_label_map = eval_label_map = LabelMap(
+                to_node=project_to_subtree[label_to_node],
+                to_target=project_to_subtree[label_to_node])
+        # Replace tree with subtree.
         tree = subtree
-        names = [names[i] for i in subtree_nodes]
-        label_nodes = np.array(new_label_nodes)
-        # Note the difference between label_nodes and eval_label_lookup:
-        # dom(label_nodes) = range(subtree.num_leaf_nodes())
-        # dom(eval_label_lookup) = range(original_tree.num_leaf_nodes())
-        train_label_lookup = torch.from_numpy(train_label_lookup)
-        # eval_label_lookup = torch.from_numpy(eval_label_lookup)
+
+    elif config.train_labels:
+        # Replace the training dataset by a dataset with modified labels.
+        # The modified labels can be any node, therefore not possible to use leaf targets.
+        assert not config.train_with_leaf_targets, 'cannot override labels and use leaf targets'
+        # Override the
+        targets = load_labels(config.train_labels, node_names)
+        # Check consistency of new labels.
+        assert len(targets) == len(train_dataset)
+        is_ancestor = tree.ancestor_mask()
+        assert np.all(is_ancestor[targets, label_to_node[train_dataset.targets]])
+        logging.info('new labels are ancestors of original labels')
+        train_dataset = datasets.OverrideTargets(train_dataset, targets)
+        # The label space is the set of nodes.
+        # After overriding the targets in the training set, the labels are already nodes.
+        # However, the eval labels are unchanged and we need to map them to nodes.
+        train_label_map = LabelMap(
+            to_node=np.arange(tree.num_nodes()),
+            to_target=np.arange(tree.num_nodes()))
+        eval_label_map = LabelMap(
+            to_node=label_to_node,
+            to_target=label_to_node)
+
     else:
-        # Leave training labels unmodified.
-        train_label_lookup = None
-        # Map labels to nodes during evaluation.
-        eval_label_lookup = np.array(label_nodes)
-        # eval_label_lookup = torch.from_numpy(label_nodes)
+        if not config.train_with_leaf_targets:
+            # Use nodes as targets.
+            train_label_map = eval_label_map = LabelMap(
+                to_node=label_to_node,
+                to_target=label_to_node)
+        else:
+            # Use identity mapping to obtain targets.
+            # TODO: Would prefer not to do trivial lookup but None means no map exists.
+            # May avoid branching anyway?
+            train_label_map = eval_label_map = LabelMap(
+                to_node=label_to_node,
+                to_target=np.arange(tree.num_leaf_nodes()))
+
+    # Convert target map to torch tensor.
+    train_label_map = LabelMap(
+        to_node=train_label_map.to_node,
+        to_target=torch.from_numpy(train_label_map.to_target))
+    if eval_label_map.to_target is not None:
+        eval_label_map = LabelMap(
+            to_node=eval_label_map.to_node,
+            to_target=torch.from_numpy(eval_label_map.to_target))
+
+    return train_dataset, eval_dataset, tree, train_label_map, eval_label_map
+
+
+def load_hierarchy(hierarchy_tag):
+    fname = SOURCE_DIR / f'resources/hierarchy/{hierarchy_tag}.csv'
+    with open(fname) as f:
+        tree, node_names = hier.make_hierarchy_from_edges(hier.load_edges(f))
+    return tree, node_names
+
+
+def load_node_subset(subset_tag, node_names):
+    fname = SOURCE_DIR / f'resources/class_subset/{subset_tag}.txt'
+    with open(fname) as f:
+        name_subset = [line.strip() for line in f]
+    # Take sub-tree of original tree.
+    name_to_node = {name: i for i, name in enumerate(node_names)}
+    node_subset = [name_to_node[name] for name in name_subset]
+    return node_subset
+
+
+def load_labels(labels_tag, node_names):
+    name_to_node = {name: i for i, name in enumerate(node_names)}
+    fname = SOURCE_DIR / f'resources/override_labels/{labels_tag}.csv.gz'
+    with gzip.open(fname, 'rt') as f:
+        rows = list(csv.reader(f))
+    return np.array([name_to_node[new_name] for new_name, _ in rows])
+
+
+def train(config, experiment_dir: Optional[pathlib.Path]):
+    device = torch.device('cuda')
+
+    train_dataset, eval_dataset, tree, train_label_map, eval_label_map = make_datasets(config)
 
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
@@ -260,42 +416,56 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     # TODO: Create a factory for this?
     if config.predict == 'flat_softmax':
         num_outputs = tree.num_leaf_nodes()
-        loss_fn = partial(F.cross_entropy, label_smoothing=config.train.label_smoothing)
+        if config.train_with_leaf_targets:
+            loss_fn = partial(F.cross_entropy, label_smoothing=config.train.label_smoothing)
+        else:
+            if config.train.label_smoothing:
+                raise NotImplementedError
+            loss_fn = hier_torch.FlatLogSoftmaxNLL(tree).to(device)
         pred_fn = partial(
-            lambda sum_fn, theta: sum_fn(theta.softmax(dim=-1), dim=-1),
+            lambda sum_fn, theta: sum_fn(F.softmax(theta, dim=-1), dim=-1),
             hier_torch.SumLeafDescendants(tree, strict=False).to(device))
+
     elif config.predict == 'hier_softmax':
         num_outputs = tree.num_nodes() - 1
         # loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)
         # loss_fn = hier_torch.HierSoftmaxNLL(tree, with_leaf_targets=True).to(device)
         loss_fn = hier_torch.HierSoftmaxCrossEntropy(
-            tree, with_leaf_targets=True, label_smoothing=config.train.label_smoothing).to(device)
+            tree, with_leaf_targets=config.train_with_leaf_targets,
+            label_smoothing=config.train.label_smoothing).to(device)
         pred_fn = partial(
             lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
             # partial(hier_torch.hier_log_softmax, tree)
             hier_torch.HierLogSoftmax(tree).to(device))
+
     elif config.predict == 'bertinetto_hxe':
         if config.train.label_smoothing:
             raise NotImplementedError
         num_outputs = tree.num_nodes() - 1
-        loss_fn = hier_torch.BertinettoHXE(tree, config.train.hxe_alpha, with_leaf_targets=True).to(device)
+        loss_fn = hier_torch.BertinettoHXE(
+            tree, config.train.hxe_alpha,
+            with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
             lambda log_softmax_fn, theta: torch.exp(log_softmax_fn(theta)),
             hier_torch.HierLogSoftmax(tree).to(device))
+
     elif config.predict == 'multilabel':
         if config.train.label_smoothing:
-            raise NotImplementedError  # TODO
+            raise NotImplementedError
         num_outputs = tree.num_nodes() - 1
-        loss_fn = hier_torch.MultiLabelNLL(tree, with_leaf_targets=True).to(device)
+        loss_fn = hier_torch.MultiLabelNLL(
+            tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(hier_torch.multilabel_likelihood, tree)
+
     # elif config.predict == 'hier_sigmoid':
     #     if config.train.label_smoothing:
-    #         raise NotImplementedError  # TODO
+    #         raise NotImplementedError
     #     num_outputs = tree.num_nodes() - 1
     #     loss_fn = hier_torch.HierSigmoidNLL(tree, with_leaf_targets=True).to(device)
     #     pred_fn = partial(
     #         lambda log_sigmoid_fn, theta: torch.exp(log_sigmoid_fn(theta)),
     #         hier_torch.HierLogSigmoid(tree).to(device))
+
     else:
         raise ValueError('unknown predict method', config.predict)
 
@@ -387,17 +557,17 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             with torch.inference_mode():
                 meter = progmet.ProgressMeter(f'eval epoch {epoch}', interval_time=5, num_div=5)
                 for minibatch in meter(eval_loader):
-                    inputs, original_labels = minibatch
+                    inputs, gt_labels = minibatch
                     batch_len = len(inputs)
                     inputs = inputs.to(device)
                     theta = net(inputs)
-                    if train_label_lookup is None:
-                        # Can only evaluate loss if all labels are leaf nodes.
-                        labels = original_labels.to(device)
-                        loss = loss_fn(theta, labels)
+                    # Can only evaluate loss if there exists a mapping to targets.
+                    if eval_label_map.to_target is not None:
+                        gt_targets = eval_label_map.to_target[gt_labels]
+                        assert torch.all(gt_targets >= 0)
+                        loss = loss_fn(theta, gt_targets.to(device))
                         total_loss += batch_len * loss.item()  # TODO: Avoid assuming mean?
                     prob = pred_fn(theta).cpu().numpy()
-                    gt = eval_label_lookup[original_labels]  # was: label_nodes[labels]
                     pred = {}
                     pred['leaf'] = argmax_where(prob, is_leaf)
                     max_leaf_prob = max_where(prob, is_leaf)
@@ -406,20 +576,21 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     # Truncate predictions where more specific than ground-truth.
                     # (Only necessary if some labels are not leaf nodes.)
                     # TODO: Need to do for metric sequences as well!
-                    pred = {k: hier.truncate_given_lca(gt, pr, find_lca(gt, pr))
+                    gt_node = eval_label_map.to_node[gt_labels]
+                    pred = {k: hier.truncate_given_lca(gt_node, pr, find_lca(gt_node, pr))
                             for k, pr in pred.items()}
 
                     example_count += batch_len
-                    outputs['gt'].append(gt)
+                    outputs['gt'].append(gt_node)
                     # outputs['label'].append(labels)
-                    outputs['original_label'].append(original_labels)
+                    outputs['original_label'].append(gt_labels)
                     outputs['max_leaf_prob'].append(max_leaf_prob)
                     full_outputs['prob'].append(prob)
                     for method in PREDICT_METHODS:
                         outputs['pred'][method].append(pred[method])
                         for field in metric_fns:
                             metric_fn = metric_fns[field]
-                            metric_value = metric_fn(gt, pred[method])
+                            metric_value = metric_fn(gt_node, pred[method])
                             outputs['metric'][method][field].append(metric_value)
                             metric_totals[method][field] += metric_value.sum()
 
@@ -432,10 +603,10 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     for field in metric_fns:
                         metric_fn = metric_fns[field]
                         # TODO: Could vectorize if necessary.
-                        metric_seqs = [metric_fn(gt[i], pred_seqs[i]) for i in range(batch_len)]
+                        metric_seqs = [metric_fn(gt_node[i], pred_seqs[i]) for i in range(batch_len)]
                         seq_outputs['metric'][field].extend(metric_seqs)
 
-            if train_label_lookup is None:
+            if eval_label_map.to_target is not None:
                 # Can only evaluate loss if all labels are leaf nodes.
                 mean_loss = total_loss / example_count
                 writer.add_scalar('loss/eval', mean_loss, epoch)
@@ -478,17 +649,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                 with open(path, 'wb') as f:
                     pickle.dump(full_outputs, f)
 
-            # step_scores = np.concatenate([seq[1:] for seq in prob_seqs])
-            # print('number of operating points:', len(step_scores))
-            # step_order = np.argsort(-step_scores)
-            # step_scores = step_scores[step_order]
-            # total_init = {}
-            # total_deltas = {}
-            # for field in metric_fns:
-            #     metric_seqs = metric_seqs[field]
-            #     metric_seqs = [seq.astype(float) for seq in metric_seqs]
-            #     total_init[field] = np.asarray([seq[0] for seq in metric_seqs]).sum()
-
         if not epoch < config.train.num_epochs:
             break
 
@@ -501,23 +661,22 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         net.train()
         meter = progmet.ProgressMeter(f'train epoch {epoch}', interval_time=5, num_div=5)
         for minibatch in meter(train_loader):
-            inputs, original_labels = minibatch
+            inputs, gt_labels = minibatch
             batch_len = len(inputs)
-            labels = (original_labels if train_label_lookup is None
-                      else train_label_lookup[original_labels])
+            gt_targets = train_label_map.to_target[gt_labels]
+            assert torch.all(gt_targets >= 0)
             # TODO: Assert that all labels are non-negative?
-            inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
-            theta = net(inputs)
-            loss = loss_fn(theta, labels)
+            theta = net(inputs.to(device))
+            loss = loss_fn(theta, gt_targets.to(device))
             loss.backward()
             optimizer.step()
-            if loss.isnan():  # Note: This will block.
-                raise ValueError('loss is nan')
-            if loss.isinf():
-                raise ValueError('loss is inf')
-            loss = loss.item()
+            loss = loss.item()  # This will block.
             logging.debug('loss: %g', loss)
+            if np.isnan(loss):
+                raise ValueError('loss is nan')
+            if np.isinf(loss):
+                raise ValueError('loss is inf')
             total_loss += loss
             step_count += 1
 
@@ -525,16 +684,16 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             with torch.no_grad():
                 prob = pred_fn(theta)
             prob = prob.cpu().numpy()
-            labels = labels.cpu().numpy()
-            gt = label_nodes[labels]  # == eval_label_lookup[original_labels]
             pred = {}
             pred['leaf'] = argmax_where(prob, is_leaf)
             pred['majority'] = arglexmin_where(np.broadcast_arrays(-prob, -specificity),
                                                (prob > 0.5) & node_mask)
+            gt_node = train_label_map.to_node[gt_labels]
+
             for method in PREDICT_METHODS:
                 for field in metric_fns:
                     metric_fn = metric_fns[field]
-                    metric_totals[method][field] += metric_fn(gt, pred[method]).sum()
+                    metric_totals[method][field] += metric_fn(gt_node, pred[method]).sum()
             example_count += batch_len
 
         mean_loss = total_loss / step_count

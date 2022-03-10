@@ -9,10 +9,14 @@ def get_config():
         'train_split': 'train',
         'eval_split': 'val',
         'hierarchy': 'tiny_imagenet_fiveai',
-        'train_subset': '',
         'predict': 'flat_softmax',
         'train_transform': 'rand_crop56_hflip',
         'eval_transform': 'crop56',
+
+        'train_with_leaf_targets': True,
+        'train_subset': '',
+        'keep_examples': False,
+        'train_labels': '',
 
         # Config for training algorithm.
         'train': ml_collections.ConfigDict({
