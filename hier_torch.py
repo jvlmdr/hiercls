@@ -23,7 +23,8 @@ def flat_log_softmax(
     # Obtain logp for all leaf descendants, -inf for other nodes.
     is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf).to(scores.device)
     logp_descendants = torch.where(
-        is_ancestor_leaf, logp_leaf.unsqueeze(-2),
+        is_ancestor_leaf,
+        logp_leaf.unsqueeze(-2),
         torch.tensor(-torch.inf, device=scores.device))
     return torch.logsumexp(logp_descendants, dim=-1)
 
@@ -41,11 +42,15 @@ class FlatLogSoftmax(nn.Module):
         # However, overriding _apply() will change the dtype.
         self.is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf)
 
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.is_ancestor_leaf = fn(self.is_ancestor_leaf).bool()  # Preserve dtype.
+        return self
+
     def forward(self, scores: torch.Tensor) -> torch.Tensor:
         logp_leaf = F.log_softmax(scores, dim=-1)
         # Obtain logp for leaf descendants, -inf for other nodes.
         # TODO: This is hacky. Would prefer not to mutate object here.
-        self.is_ancestor_leaf = self.is_ancestor_leaf.to(scores.device)
         logp_descendants = torch.where(
             self.is_ancestor_leaf,
             logp_leaf.unsqueeze(-2),
@@ -66,11 +71,14 @@ class FlatLogSoftmaxNLL(nn.Module):
         # However, overriding _apply() will change the dtype.
         self.is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf)
 
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.is_ancestor_leaf = fn(self.is_ancestor_leaf).bool()  # Preserve dtype.
+        return self
+
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         logp_leaf = F.log_softmax(scores, dim=-1)
         # Obtain logp for leaf descendants, -inf for other nodes.
-        # TODO: This is hacky. Would prefer not to mutate object here.
-        self.is_ancestor_leaf = self.is_ancestor_leaf.to(scores.device)
         logp_descendants = torch.where(
             self.is_ancestor_leaf,
             logp_leaf.unsqueeze(-2),
