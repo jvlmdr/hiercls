@@ -5,14 +5,18 @@ def get_config():
     return ml_collections.ConfigDict({
         'dataset': 'imagenet',
         'dataset_root': '/data/torchvision/imagenet/',
-        'model': 'torch_resnet18',
+        'model': 'torch_resnet50',
         'train_split': 'train',
         'eval_split': 'val',
         'hierarchy': 'imagenet_fiveai',
-        'train_subset': '',
         'predict': 'flat_softmax',
         'train_transform': 'rand_resizedcrop224_hflip',
         'eval_transform': 'resize256_crop224',
+
+        'train_with_leaf_targets': True,
+        'train_subset': '',
+        'keep_examples': False,
+        'train_labels': '',
 
         # Config for training algorithm.
         'train': ml_collections.ConfigDict({

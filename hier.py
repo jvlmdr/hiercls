@@ -21,8 +21,11 @@ class Hierarchy:
     def edges(self) -> List[Tuple[int, int]]:
         return list(zip(self._parents[1:], itertools.count(1)))
 
-    def parents(self) -> np.ndarray:
-        return np.array(self._parents)
+    def parents(self, root_loop: bool = False) -> np.ndarray:
+        if root_loop:
+            return np.where(self._parents >= 0, self._parents, np.arange(len(self._parents)))
+        else:
+            return np.array(self._parents)
 
     def children(self) -> Dict[int, np.ndarray]:
         result = collections.defaultdict(list)

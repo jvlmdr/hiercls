@@ -115,7 +115,10 @@ def hier_softmax_nll_with_leaf(
 class HierSoftmaxNLL(nn.Module):
     """Avoids recomputation in hier_softmax_nll."""
 
-    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False):
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            with_leaf_targets: bool = False):
         super().__init__()
         if with_leaf_targets:
             self.label_order = torch.from_numpy(tree.leaf_subset())
@@ -150,7 +153,8 @@ class HierSoftmaxCrossEntropy(nn.Module):
             self,
             tree: hier.Hierarchy,
             with_leaf_targets: bool = False,
-            label_smoothing: float = 0.0):
+            label_smoothing: float = 0.0,
+            node_weight: Optional[torch.Tensor] = None):
         super().__init__()
         self.label_smoothing = label_smoothing
         if with_leaf_targets:
@@ -162,6 +166,7 @@ class HierSoftmaxCrossEntropy(nn.Module):
         self.hier_cond_log_softmax = HierCondLogSoftmax(tree)
         self.sum_label_descendants = SumDescendants(tree, subset=self.label_order)
         self.prior = torch.from_numpy(hier.uniform_leaf(tree))
+        self.node_weight = node_weight
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -169,6 +174,7 @@ class HierSoftmaxCrossEntropy(nn.Module):
         self.hier_cond_log_softmax = self.hier_cond_log_softmax._apply(fn)
         self.sum_label_descendants = self.sum_label_descendants._apply(fn)
         self.prior = fn(self.prior)
+        self.node_weight = fn(self.node_weight) if self.node_weight is not None else None
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -183,7 +189,10 @@ class HierSoftmaxCrossEntropy(nn.Module):
         if self.label_smoothing:
             q = (1 - self.label_smoothing) * q + self.label_smoothing * self.prior
         log_cond_p = self.hier_cond_log_softmax(scores, dim=-1)
-        xent = torch.sum(q * -log_cond_p, dim=-1)
+        xent = q * -log_cond_p
+        if self.node_weight is not None:
+            xent *= self.node_weight
+        xent = torch.sum(xent, dim=-1)
         return torch.mean(xent)
 
 

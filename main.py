@@ -430,9 +430,21 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         num_outputs = tree.num_nodes() - 1
         # loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)
         # loss_fn = hier_torch.HierSoftmaxNLL(tree, with_leaf_targets=True).to(device)
+        if config.train.hier_normalize == '':
+            assert not config.train.hier_normalize
+            node_weight = None
+        elif config.train.hier_normalize == 'self':
+            node_weight = torch.from_numpy(
+                (1 / hier.uniform_leaf(tree)) * (1 / tree.num_nodes()))
+        elif config.train.hier_normalize == 'parent':
+            parent_mass = hier.uniform_leaf(tree)[tree.parents(root_loop=True)]
+            node_weight = torch.from_numpy((1 / parent_mass) * (1 / tree.num_internal_nodes()))
+        else:
+            raise ValueError('unknown hier_normalize', config.train.hier_normalize)
         loss_fn = hier_torch.HierSoftmaxCrossEntropy(
             tree, with_leaf_targets=config.train_with_leaf_targets,
-            label_smoothing=config.train.label_smoothing).to(device)
+            label_smoothing=config.train.label_smoothing,
+            node_weight=node_weight).to(device)
         pred_fn = partial(
             lambda log_softmax_fn, theta: log_softmax_fn(theta).exp(),
             # partial(hier_torch.hier_log_softmax, tree)

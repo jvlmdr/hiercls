@@ -5,18 +5,21 @@ def get_config():
     return ml_collections.ConfigDict({
         'dataset': 'tiny_imagenet',
         'dataset_root': '/data/manual/tiny_imagenet/',
+        # Is the label set equal to the leaf nodes?
+        # This makes some losses (e.g. flat softmax) simpler.
+        # If not, the labels are assumed to be the node index
+        # unless a label order is specified.
+        'leaf_labels': False,
+        'label_order': '',
         'model': 'torch_resnet18',
         'train_split': 'train',
+        'train_labels': '',  # Override labels in dataset.
+        'train_subset': '',  # Subset of tree to use during training.
         'eval_split': 'val',
         'hierarchy': 'tiny_imagenet_fiveai',
         'predict': 'flat_softmax',
         'train_transform': 'rand_crop56_hflip',
         'eval_transform': 'crop56',
-
-        'train_with_leaf_targets': True,
-        'train_subset': '',
-        'keep_examples': False,
-        'train_labels': '',
 
         # Config for training algorithm.
         'train': ml_collections.ConfigDict({
@@ -28,6 +31,5 @@ def get_config():
             'weight_decay': 5e-4,
             'label_smoothing': 0.0,
             'hxe_alpha': 0.0,
-            'hier_normalize': '',
         }),
     })
