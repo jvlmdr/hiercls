@@ -9,10 +9,14 @@ def get_config():
         'train_split': 'train',
         'eval_split': 'val',
         'hierarchy': 'inat18',
-        'train_subset': '',
         'predict': 'flat_softmax',
         'train_transform': 'rand_resizedcrop224_hflip',
         'eval_transform': 'resize256_crop224',
+
+        'train_with_leaf_targets': True,
+        'train_subset': '',
+        'keep_examples': False,
+        'train_labels': '',
 
         # Config for training algorithm.
         'train': ml_collections.ConfigDict({
@@ -24,5 +28,6 @@ def get_config():
             'weight_decay': 5e-4,
             'label_smoothing': 0.0,
             'hxe_alpha': 0.0,
+            'hier_normalize': '',
         }),
     })

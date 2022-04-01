@@ -1,7 +1,8 @@
-"""Use annotations from JSON files.
+"""iNaturalist datasets using annotations from JSON files.
 
-The torchvision INaturalist class does not load the train/val split.
+The torchvision INaturalist class does not support the train/val split.
 Furthermore, it may give a different order to the labels (to confirm).
+(The hierarchy uses dataset['category']['id'] from the JSON file.)
 """
 
 import json
@@ -13,25 +14,44 @@ import torchvision
 default_loader = torchvision.datasets.folder.default_loader
 
 
-class INaturalist2018(torchvision.datasets.VisionDataset):
+def INaturalist2017(root: str, split: str, **kwargs):
+    return INaturalist(root=root, json_file=f'{split}2017.json', **kwargs)
+
+
+def INaturalist2018(root: str, split: str, **kwargs):
+    return INaturalist(root=root, json_file=f'{split}2018.json', **kwargs)
+
+
+def INaturalist2019(root: str, split: str, **kwargs):
+    return INaturalist(root=root, json_file=f'{split}2019.json', **kwargs)
+
+
+def INaturalist2021(root: str, split: str, **kwargs):
+    # Note: 2021 edition does not include year in JSON filename.
+    return INaturalist(root=root, json_file=f'{split}.json', **kwargs)
+
+
+class INaturalist(torchvision.datasets.VisionDataset):
     """Loads annotations for train and val sets from JSON file.
 
     Expects directory structure:
-        train2018.json
-        val2018.json
-        train_val2018/{biological_class}/{category_id}/{filename}.jpg
+        {root}/{json_file}.json
+        {root}/{image['file_name']} for each image in the JSON file
     """
 
-    def __init__(self, root: str, split: str,
+    def __init__(self,
+                 root: str,
+                 json_file: str,
                  loader: Callable = default_loader,
                  **kwargs):
         # Parent constructor sets root and handles transforms.
         super().__init__(root, **kwargs)
         self.loader = loader
 
-        with open(os.path.join(root, f'{split}2018.json')) as f:
+        with open(os.path.join(root, json_file)) as f:
             dataset = json.load(f)
         image_to_fname = {im['id']: im['file_name'] for im in dataset['images']}
+        # Note: The image filename is relative to root dir, not absolute.
         self.samples = [(image_to_fname[ann['image_id']], ann['category_id'])
                         for ann in dataset['annotations']]
         self.targets = [target for _, target in self.samples]

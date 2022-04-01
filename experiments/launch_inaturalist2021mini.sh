@@ -1,0 +1,3 @@
+EXP_ROOT=../experiments/2022-03-31-inat21mini/
+
+LOSS=flat_softmax ; EP=20 ; LR=0.01 ; WD=0.0003 ; BATCH=64 ; EXP_NAME=${LOSS}-lr-${LR}-b-${BATCH}-wd-${WD}-ep-${EP} ; ../env/bin/python main.py --experiment_dir=${EXP_ROOT}/${EXP_NAME} --tensorboard_dir=${EXP_ROOT}/tensorboard/${EXP_NAME} --config=configs/inaturalist2021mini.py --config.dataset_root=/mnt/ssd1/data/manual/inaturalist2021/ --config.predict=${LOSS} --config.train.batch_size=${BATCH} --config.train.learning_rate=${LR} --config.train.weight_decay=${WD} --config.train.num_epochs=${EP} --config.train_with_leaf_targets=true --loader_num_workers=8 --save_freq=5

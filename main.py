@@ -103,6 +103,7 @@ DATASET_FNS = {
     'imagenet': torchvision.datasets.ImageNet,
     'tiny_imagenet': datasets.TinyImageNet,
     'inaturalist2018': datasets.INaturalist2018,
+    'inaturalist2021': datasets.INaturalist2021,
 }
 
 # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
