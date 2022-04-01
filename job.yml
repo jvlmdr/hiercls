@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-experiment
+  namespace: aiml-valmadre-research
+  labels:
+    gcp_secret_file: data-manager
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: dataset-volume
+          persistentVolumeClaim:
+            claimName: hier-cls-data
+        - name: shared-memory
+          emptyDir:
+            medium: Memory
+      containers:
+        - name: test-experiment-container
+          image: docker.aiml.team/jack.valmadre/hier-class:latest
+          stdin: true
+          tty: true
+          command: ["/bin/sh", "-c"]
+          args:
+            - git clone https://deep-purple:$SECRET_SECRET_KEY@gitlab.aiml.team/jack.valmadre/hier-class.git &&
+              cd v2p &&
+              ./run.sh 
+
+          resources:
+            limits:
+              nvidia.com/gpu: 2
+              memory: 128Gi
+              cpu: 8000m
+            requests:
+              memory: 128Gi
+              cpu: 8000m
+          volumeMounts:
+            - mountPath: /data
+              name: dataset-volume
+            - mountPath: /dev/shm
+              name: shared-memory
+          env:
+            - name: TORCH_HOME
+              value: /data
+            - name: SECRET_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: deep-purple
+                  key: token
