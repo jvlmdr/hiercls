@@ -325,7 +325,45 @@ class HierLogSoftmax(nn.Module):
         return self.sum_ancestors_fn(log_cond_p, dim=dim)
 
 
-def leaf_embed(
+class HierSoftmaxNLLWithInactive(nn.Module):
+    """Hierarchical softmax with loss for inactive nodes."""
+
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            with_leaf_targets: bool = False):
+        super().__init__()
+        if with_leaf_targets:
+            self.label_order = torch.from_numpy(tree.leaf_subset())
+        else:
+            self.label_order = None
+        self.hier_log_softmax = HierLogSoftmax(tree)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        # Do not apply fn to indices because it might convert dtype.
+        self.hier_log_softmax = self.hier_log_softmax._apply(fn)
+        return self
+
+    @property
+    def device(self) -> torch.device:
+        return self.hier_log_softmax.device
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        # TODO: Could make this faster by only computing likelihood for targets.
+        device = self.device
+
+        # Log-sum-exp for each internal node.
+        self.logsumexp = {}
+
+        log_prob = self.hier_log_softmax(scores, dim=-1)
+        if self.label_order is not None:
+            log_prob = torch.index_select(log_prob, -1, self.label_order.to(device))
+        nll = -torch.gather(log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
+        return torch.mean(nll)
+
+
+def leaf_put(
         tree: hier.Hierarchy,
         values: torch.Tensor,
         dim: int = -1) -> torch.Tensor:

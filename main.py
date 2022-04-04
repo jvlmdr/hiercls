@@ -434,12 +434,15 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         if config.train.hier_normalize == '':
             assert not config.train.hier_normalize
             node_weight = None
-        elif config.train.hier_normalize == 'self':
-            node_weight = torch.from_numpy(
-                (1 / hier.uniform_leaf(tree)) * (1 / tree.num_nodes()))
+        # elif config.train.hier_normalize == 'self':
+        #     node_weight = torch.from_numpy(
+        #         (1 / hier.uniform_leaf(tree)) * (1 / tree.num_nodes()))
         elif config.train.hier_normalize == 'parent':
             parent_mass = hier.uniform_leaf(tree)[tree.parents(root_loop=True)]
-            node_weight = torch.from_numpy((1 / parent_mass) * (1 / tree.num_internal_nodes()))
+            node_weight = torch.from_numpy((1 / parent_mass) * (1 / tree.num_conditionals()))
+        elif config.train.hier_normalize == 'sqrt_parent':
+            parent_mass = hier.uniform_leaf(tree)[tree.parents(root_loop=True)]
+            node_weight = torch.from_numpy(np.sqrt((1 / parent_mass) * (1 / tree.num_conditionals())))
         else:
             raise ValueError('unknown hier_normalize', config.train.hier_normalize)
         loss_fn = hier_torch.HierSoftmaxCrossEntropy(

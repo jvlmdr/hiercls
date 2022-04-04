@@ -57,6 +57,9 @@ class Hierarchy:
     def num_internal_nodes(self) -> int:
         return np.count_nonzero(np.logical_not(self.leaf_mask()))
 
+    def num_conditionals(self) -> int:
+        return np.count_nonzero(self.num_children() > 1)
+
     def depths(self) -> np.ndarray:
         # n = len(self._parents)
         # d = np.zeros([n], dtype=int)
