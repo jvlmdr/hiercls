@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -162,3 +162,39 @@ class IsCorrect:
         # Correct if gt is below pr or pr is below gt.
         # If this is the case, lca == gt or lca == pr.
         return (depth_lca == depth_gt) | (depth_lca == depth_pr)
+
+
+def operating_curve(
+        example_scores: List[np.ndarray],
+        example_metrics: Dict[str, List[np.ndarray]],
+        ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """Obtains operating curve for set of metrics.
+
+    For each field in example_metrics, `example_scores[i]` and `example_metrics[field][i]`
+    are arrays of the same length, ordered descending by score.
+    This can be obtained using `infer.prediction_sequence()`.
+    """
+    # Obtain order of scores.
+    # Note: Could do a merge sort here, since each array is already sorted.
+    step_scores = np.concatenate([seq[1:] for seq in example_scores])
+    step_order = np.argsort(-step_scores)
+    step_scores = step_scores[step_order]
+    step_totals = {}
+    for field, example_values in example_metrics.items():
+        # Convert to float since np.diff() treats bools as mod 2 arithmetic.
+        example_values = [seq.astype(float) for seq in example_values]
+        total_init = np.sum([seq[0] for seq in example_values])
+        total_deltas = np.concatenate([np.diff(seq) for seq in example_values])[step_order]
+        step_totals[field] = total_init + _cumsum_with_zero(total_deltas)
+    return step_scores, step_totals
+
+
+def _cumsum_with_zero(x: np.ndarray, axis: int = 0) -> np.ndarray:
+    ndim = x.ndim
+    pad_width = [(0, 0)] * ndim
+    pad_width[axis] = (1, 0)
+    return np.cumsum(np.pad(x, pad_width, 'constant'), axis=axis)
+
+
+# def auc():
+#     raise NotImplementedError

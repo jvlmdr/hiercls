@@ -83,10 +83,10 @@ def default_print_func(title, i, n, now, start_time, prev_i, prev_time):
         percent = i / n * 100
         time_total = n * mean_period
         progress_str += '{:3.0f}% ({:d}/{:d})'.format(percent, i, n)
-    progress_str += '; T={:#.3g} f={:#.3g}; elapsed {}; mean T={:#.3g} f={:#.3g}'.format(
+    progress_str += '; T={:#.3g} f={:#.3g}; mean T={:#.3g} f={:#.3g}; elapsed {}'.format(
         inst_period, 1. / inst_period,
-        _format_dur(time_elapsed),
-        mean_period, 1. / mean_period)
+        mean_period, 1. / mean_period,
+        _format_dur(time_elapsed))
     if n is not None and i < n:
         time_rem = time_total - time_elapsed
         progress_str += '; remaining {} of {}'.format(

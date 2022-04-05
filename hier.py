@@ -254,13 +254,13 @@ def lca_depth(tree: Hierarchy, inds_a: np.ndarray, inds_b: np.ndarray) -> np.nda
         axis=-1)
 
 
-def lca(tree: Hierarchy, inds_a: np.ndarray, inds_b: np.ndarray) -> np.ndarray:
+def find_lca(tree: Hierarchy, inds_a: np.ndarray, inds_b: np.ndarray) -> np.ndarray:
     """Returns the index of the LCA node.
 
     Supports multi-dimensional index arrays.
     For example, to obtain an exhaustive table:
         n = tree.num_nodes()
-        lca(tree, np.arange(n)[:, np.newaxis], np.arange(n)[np.newaxis, :])
+        find_lca(tree, np.arange(n)[:, np.newaxis], np.arange(n)[np.newaxis, :])
     """
     paths = tree.paths_padded(exclude_root=False)
     paths_a = paths[inds_a]
@@ -284,6 +284,16 @@ class FindLCA:
             ((paths_a == paths_b) & (paths_a >= 0) & (paths_b >= 0)),
             axis=-1)
         return paths[inds_a, num_common - 1]
+
+
+def truncate_at_lca(tree: Hierarchy, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
+    """Truncates the prediction if a descendant of the ground-truth.
+
+    Note that this calls find_lca().
+    If calling repetitively, use `FindLCA` and `truncate_given_lca`.
+    """
+    lca = find_lca(tree, gt, pr)
+    return truncate_given_lca(gt, pr, lca)
 
 
 def truncate_given_lca(gt: np.ndarray, pr: np.ndarray, lca: np.ndarray) -> np.ndarray:

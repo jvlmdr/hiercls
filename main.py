@@ -5,7 +5,7 @@ import gzip
 import json
 import pathlib
 import pickle
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from absl import app
 from absl import flags
@@ -26,6 +26,7 @@ from torchvision import transforms
 import datasets
 import hier
 import hier_torch
+import infer
 import metrics
 import models.kuangliu_cifar.resnet
 import models.moit.preact_resnet
@@ -376,7 +377,7 @@ def load_hierarchy(hierarchy_tag):
     return tree, node_names
 
 
-def load_node_subset(subset_tag, node_names):
+def load_node_subset(subset_tag: str, node_names: List[str]) -> List[int]:
     fname = SOURCE_DIR / f'resources/class_subset/{subset_tag}.txt'
     with open(fname) as f:
         name_subset = [line.strip() for line in f]
@@ -394,29 +395,23 @@ def load_labels(labels_tag, node_names):
     return np.array([name_to_node[new_name] for new_name, _ in rows])
 
 
-def train(config, experiment_dir: Optional[pathlib.Path]):
-    device = torch.device('cuda')
-
-    train_dataset, eval_dataset, tree, train_label_map, eval_label_map = make_datasets(config)
-
-    train_loader = torch.utils.data.DataLoader(
-        dataset=train_dataset,
-        batch_size=config.train.batch_size,
-        shuffle=True,
-        pin_memory=FLAGS.loader_pin_memory,
-        num_workers=FLAGS.loader_num_workers,
-        prefetch_factor=LOADER_PREFETCH_FACTOR)
-    eval_loader = torch.utils.data.DataLoader(
-        dataset=eval_dataset,
-        batch_size=EVAL_BATCH_SIZE,
-        shuffle=False,
-        pin_memory=False,  # FLAGS.loader_pin_memory,
-        num_workers=FLAGS.loader_num_workers,
-        prefetch_factor=LOADER_PREFETCH_FACTOR)
-
-    # TODO: Create a factory for this?
-    if config.predict == 'flat_softmax':
+def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
+    if predict == 'flat_softmax':
         num_outputs = tree.num_leaf_nodes()
+    elif predict == 'hier_softmax':
+        num_outputs = tree.num_nodes() - 1
+    elif predict == 'bertinetto_hxe':
+        num_outputs = tree.num_nodes() - 1
+    elif predict == 'multilabel':
+        num_outputs = tree.num_nodes() - 1
+    else:
+        raise ValueError('unknown predict method', predict)
+    return num_outputs
+
+
+def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: torch.device,
+              ) -> Tuple[Callable, Callable]:
+    if config.predict == 'flat_softmax':
         if config.train_with_leaf_targets:
             loss_fn = partial(F.cross_entropy, label_smoothing=config.train.label_smoothing)
         else:
@@ -428,7 +423,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             hier_torch.SumLeafDescendants(tree, strict=False).to(device))
 
     elif config.predict == 'hier_softmax':
-        num_outputs = tree.num_nodes() - 1
         # loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)
         # loss_fn = hier_torch.HierSoftmaxNLL(tree, with_leaf_targets=True).to(device)
         if config.train.hier_normalize == '':
@@ -457,7 +451,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     elif config.predict == 'bertinetto_hxe':
         if config.train.label_smoothing:
             raise NotImplementedError
-        num_outputs = tree.num_nodes() - 1
         loss_fn = hier_torch.BertinettoHXE(
             tree, config.train.hxe_alpha,
             with_leaf_targets=config.train_with_leaf_targets).to(device)
@@ -468,7 +461,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     elif config.predict == 'multilabel':
         if config.train.label_smoothing:
             raise NotImplementedError
-        num_outputs = tree.num_nodes() - 1
         loss_fn = hier_torch.MultiLabelNLL(
             tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(hier_torch.multilabel_likelihood, tree)
@@ -476,7 +468,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     # elif config.predict == 'hier_sigmoid':
     #     if config.train.label_smoothing:
     #         raise NotImplementedError
-    #     num_outputs = tree.num_nodes() - 1
     #     loss_fn = hier_torch.HierSigmoidNLL(tree, with_leaf_targets=True).to(device)
     #     pred_fn = partial(
     #         lambda log_sigmoid_fn, theta: torch.exp(log_sigmoid_fn(theta)),
@@ -485,8 +476,35 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     else:
         raise ValueError('unknown predict method', config.predict)
 
+    return loss_fn, pred_fn
+
+
+def train(config, experiment_dir: Optional[pathlib.Path]):
+    device = torch.device('cuda')
+
+    train_dataset, eval_dataset, tree, train_label_map, eval_label_map = make_datasets(config)
+
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_dataset,
+        batch_size=config.train.batch_size,
+        shuffle=True,
+        pin_memory=FLAGS.loader_pin_memory,
+        num_workers=FLAGS.loader_num_workers,
+        prefetch_factor=LOADER_PREFETCH_FACTOR)
+    eval_loader = torch.utils.data.DataLoader(
+        dataset=eval_dataset,
+        batch_size=EVAL_BATCH_SIZE,
+        shuffle=False,
+        pin_memory=False,  # FLAGS.loader_pin_memory,
+        num_workers=FLAGS.loader_num_workers,
+        prefetch_factor=LOADER_PREFETCH_FACTOR)
+
+    num_outputs = get_num_outputs(config.predict, tree)
     net = make_model(config.model, num_outputs)
     net.to(device)
+
+    # TODO: Re-factor to enable `loss_fn.to(device)`?
+    loss_fn, pred_fn = make_loss(config, tree, device)
 
     optimizer = optim.SGD(
         net.parameters(),
@@ -513,12 +531,16 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         'info_excess': info_metric.excess,
         'info_deficient': info_metric.deficient,
         'info_dist': info_metric.dist,
+        'info_recall': info_metric.recall,
+        'info_precision': info_metric.precision,
         'info_lca': info_metric.value_at_lca,
         'info_gt': info_metric.value_at_gt,
         'info_pr': info_metric.value_at_pr,
         'depth_excess': depth_metric.excess,
         'depth_deficient': depth_metric.deficient,
         'depth_dist': depth_metric.dist,
+        'depth_recall': depth_metric.recall,
+        'depth_precision': depth_metric.precision,
         'depth_lca': depth_metric.value_at_lca,
         'depth_gt': depth_metric.value_at_gt,
         'depth_pr': depth_metric.value_at_pr,
@@ -531,7 +553,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
 
     is_leaf = tree.leaf_mask()
     specificity = -tree.num_leaf_descendants()
-    node_mask = (tree.num_children() != 1)
+    not_trivial = (tree.num_children() != 1)
 
     # Loop for one extra epoch to save and evaluate model.
     for epoch in range(config.train.num_epochs + 1):
@@ -585,10 +607,10 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                         total_loss += batch_len * loss.item()  # TODO: Avoid assuming mean?
                     prob = pred_fn(theta).cpu().numpy()
                     pred = {}
-                    pred['leaf'] = argmax_where(prob, is_leaf)
-                    max_leaf_prob = max_where(prob, is_leaf)
-                    pred['majority'] = arglexmin_where(np.broadcast_arrays(-prob, -specificity),
-                                                       (prob > 0.5) & node_mask)
+                    pred['leaf'] = infer.argmax_where(prob, is_leaf)
+                    max_leaf_prob = infer.max_where(prob, is_leaf)
+                    pred['majority'] = infer.argmax_with_confidence(
+                        specificity, prob, 0.5, not_trivial)
                     # Truncate predictions where more specific than ground-truth.
                     # (Only necessary if some labels are not leaf nodes.)
                     # TODO: Need to do for metric sequences as well!
@@ -610,8 +632,10 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                             outputs['metric'][method][field].append(metric_value)
                             metric_totals[method][field] += metric_value.sum()
 
-                    pred_seqs = [prediction_sequence(specificity, p, threshold=0.5, condition=node_mask)
-                                 for p in prob]
+                    pred_seqs = [
+                        infer.pareto_optimal_predictions(specificity, p, 0.5, not_trivial)
+                        for p in prob
+                    ]
                     # TODO: Could vectorize if necessary.
                     prob_seqs = [prob[i, pred_i] for i, pred_i in enumerate(pred_seqs)]
                     seq_outputs['pred'].extend(pred_seqs)
@@ -642,7 +666,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                 metric_means['majority']['depth_dist'], metric_means['majority']['info_dist'])
 
             # Concatenate minibatches into large array.
-            leaf_predicate = lambda x: not isinstance(x, dict)  # Lists are values not containers.
+            leaf_predicate = lambda x: not isinstance(x, dict)  # Treat lists as values, not containers.
             outputs = tree_util.tree_map(np.concatenate, outputs, is_leaf=leaf_predicate)
             full_outputs = tree_util.tree_map(np.concatenate, full_outputs, is_leaf=leaf_predicate)
 
@@ -701,9 +725,9 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                 prob = pred_fn(theta)
             prob = prob.cpu().numpy()
             pred = {}
-            pred['leaf'] = argmax_where(prob, is_leaf)
-            pred['majority'] = arglexmin_where(np.broadcast_arrays(-prob, -specificity),
-                                               (prob > 0.5) & node_mask)
+            pred['leaf'] = infer.argmax_where(prob, is_leaf)
+            pred['majority'] = infer.argmax_with_confidence(
+                specificity, prob, 0.5, not_trivial)
             gt_node = train_label_map.to_node[gt_labels]
 
             for method in PREDICT_METHODS:
@@ -732,49 +756,6 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         scheduler.step()
 
 
-def argmax_where(
-        value: np.ndarray,
-        condition: np.ndarray,
-        axis: int = -1,
-        keepdims: bool = False) -> np.ndarray:
-    # Will raise an exception if not np.all(np.any(condition, axis=axis)).
-    return np.nanargmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
-
-
-def max_where(
-        value: np.ndarray,
-        condition: np.ndarray,
-        axis: int = -1,
-        keepdims: bool = False) -> np.ndarray:
-    assert np.all(np.any(condition, axis=axis)), 'require at least one valid element'
-    return np.nanmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
-
-
-def arglexmin(keys: Tuple[np.ndarray, ...], axis: int = -1) -> np.ndarray:
-    order = np.lexsort(keys, axis=axis)
-    return np.take(order, 0, axis=axis)
-
-
-def arglexmin_where(
-        keys: Tuple[np.ndarray, ...],
-        condition: np.ndarray,
-        axis: int = -1,
-        keepdims: bool = False,
-        ) -> np.ndarray:
-    # TODO: Make more efficient (linear rather than log-linear).
-    assert np.all(np.any(condition, axis=axis)), 'require at least one valid element'
-    order = np.lexsort(keys, axis=axis)
-    # Take first element in order that satisfies condition.
-    # TODO: Would be faster to take subset and then sort?
-    # Would this break the vectorization?
-    first_valid = np.argmax(np.take_along_axis(condition, order, axis=axis),
-                            axis=axis, keepdims=True)
-    result = np.take_along_axis(order, first_valid, axis=axis)
-    if not keepdims:
-        result = np.squeeze(result, axis=axis)
-    return result
-
-
 def sorted_above_threshold(p: np.ndarray, threshold: float = 0.5) -> np.ndarray:
     """Returns decreasing order of p such that threshold is satisfied.
 
@@ -784,63 +765,6 @@ def sorted_above_threshold(p: np.ndarray, threshold: float = 0.5) -> np.ndarray:
     subset, = np.nonzero(p > threshold)
     order = np.argsort(-p[subset])
     return subset[order]
-
-
-def prediction_sequence(
-        specificity: np.ndarray,
-        p: np.ndarray,
-        threshold: Optional[float] = None,
-        condition: Optional[np.ndarray] = None,
-        ) -> np.ndarray:
-    assert p.ndim == 1
-    assert specificity.ndim == 1
-
-    is_valid = np.ones(p.shape, dtype=bool)
-    if threshold is not None:
-        is_valid &= (p > threshold)
-    if condition is not None:
-        is_valid &= condition
-    assert np.any(is_valid), 'require at least one valid element'
-
-    # Order by confidence (desc) then by specificity (desc).
-    # Note that np.lexsort() orders first by the last key.
-    # (Performs stable sort from first key to last key.)
-    order = np.lexsort((-specificity[is_valid], -p[is_valid]))
-    valid_inds, = np.nonzero(is_valid)
-    order = valid_inds[order]
-
-    # Guaranteed that: i < j implies p[i] >= p[j]
-    # Want also: i < j implies specificity[i] <= specificity[j]
-    # That is, we have decreasing scores but increasing specificity.
-    ordered_specificity = specificity[order]
-    max_specificity = np.maximum.accumulate(ordered_specificity)
-    # keep = ordered_specificity >= max_specificity
-    # Keep only the first element which satisfies the non-strict inequality.
-    keep = np.concatenate([[True], ordered_specificity[1:] > max_specificity[:-1]])
-    return order[keep]
-
-
-def pool_operating_points(example_scores, example_metrics):
-    # Obtain order of scores.
-    step_scores = np.concatenate([seq[1:] for seq in example_scores])
-    step_order = np.argsort(-step_scores)
-    step_scores = step_scores[step_order]
-    metric_seqs = {}
-    for field in example_metrics:
-        # Get metric sequence for each example.
-        example_seqs = example_metrics[field]
-        example_seqs = [seq.astype(float) for seq in example_seqs]
-        total_init = np.sum([seq[0] for seq in example_seqs])
-        total_deltas = np.concatenate([np.diff(seq) for seq in example_seqs])[step_order]
-        metric_seqs[field] = total_init + cumsum_with_zero(total_deltas)
-    return metric_seqs, step_scores
-
-
-def cumsum_with_zero(x: np.ndarray, axis: int = 0) -> np.ndarray:
-    ndim = x.ndim
-    pad_width = [(0, 0)] * ndim
-    pad_width[axis] = (1, 0)
-    return np.cumsum(np.pad(x, pad_width, 'constant'), axis=axis)
 
 
 if __name__ == '__main__':
