@@ -296,6 +296,7 @@ def make_datasets(config: ml_collections.ConfigDict):
         assert hasattr(train_dataset, 'targets'), 'need targets to take class subset'
         min_node_subset = load_node_subset(config.train_subset, node_names)
         subtree, node_subset, project_to_subtree = hier.subtree(tree, min_node_subset)
+        node_names = [node_names[i] for i in node_subset]
         if not config.keep_examples:
             # Take a subset of the train_dataset.
             # For each example, check whether the node was kept in the subtree.
@@ -367,7 +368,7 @@ def make_datasets(config: ml_collections.ConfigDict):
             to_node=eval_label_map.to_node,
             to_target=torch.from_numpy(eval_label_map.to_target))
 
-    return train_dataset, eval_dataset, tree, train_label_map, eval_label_map
+    return train_dataset, eval_dataset, tree, node_names, train_label_map, eval_label_map
 
 
 def load_hierarchy(hierarchy_tag):
@@ -482,7 +483,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
 def train(config, experiment_dir: Optional[pathlib.Path]):
     device = torch.device('cuda')
 
-    train_dataset, eval_dataset, tree, train_label_map, eval_label_map = make_datasets(config)
+    train_dataset, eval_dataset, tree, _, train_label_map, eval_label_map = make_datasets(config)
 
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,

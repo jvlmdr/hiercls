@@ -152,16 +152,17 @@ class IsCorrect:
 
     def __init__(self, tree: hier.Hierarchy):
         self.find_lca = hier.FindLCA(tree)
-        self.depths = tree.depths()
+        # self.depths = tree.depths()
 
     def __call__(self, gt: np.ndarray, pr: np.ndarray) -> np.ndarray:
         lca = self.find_lca(gt, pr)
-        depth_gt = self.depths[gt]
-        depth_pr = self.depths[pr]
-        depth_lca = self.depths[lca]
-        # Correct if gt is below pr or pr is below gt.
-        # If this is the case, lca == gt or lca == pr.
-        return (depth_lca == depth_gt) | (depth_lca == depth_pr)
+        # depth_gt = self.depths[gt]
+        # depth_pr = self.depths[pr]
+        # depth_lca = self.depths[lca]
+        # # Correct if gt is below pr or pr is below gt.
+        # # If this is the case, lca == gt or lca == pr.
+        # return (depth_lca == depth_gt) | (depth_lca == depth_pr)
+        return (lca == gt) | (lca == pr)
 
 
 def operating_curve(

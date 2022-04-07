@@ -1,7 +1,7 @@
 import collections
 import csv
 import itertools
-from typing import Callable, Collection, Dict, List, Sequence, TextIO, Tuple
+from typing import Callable, Collection, Dict, List, Optional, Sequence, TextIO, Tuple
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -161,6 +161,9 @@ class Hierarchy:
         padded[row_index, col_index] = np.concatenate(paths)
         return padded
 
+    def __str__(self, node_names: Optional[List[str]] = None) -> str:
+        return format_tree(self, node_names)
+
 
 def make_hierarchy_from_edges(
         pairs : List[Tuple[str, str]],
@@ -199,13 +202,14 @@ def load_edges(f: TextIO, delimiter=',') -> List[Tuple[str, str]]:
     return pairs
 
 
-def subtree(tree: Hierarchy, nodes: Collection[int]) -> Tuple[Hierarchy, List[int], List[int]]:
+def subtree(tree: Hierarchy, nodes: Collection[int]) -> Tuple[Hierarchy, np.ndarray, np.ndarray]:
     """Finds the subtree that contains a subset of nodes."""
     # Expand set of nodes to include all ancestors.
     paths = tree.paths()
     nodes = sorted(set(itertools.chain.from_iterable(paths[x] for x in nodes)))
     if not nodes:
         raise ValueError('empty tree')
+    nodes = np.asarray(nodes)
     assert nodes[0] == 0  # Root should always be present.
     reindex = {node: i for i, node in enumerate(nodes)}
     reindex[-1] = -1  # Parent of root is -1.
@@ -299,3 +303,34 @@ def truncate_at_lca(tree: Hierarchy, gt: np.ndarray, pr: np.ndarray) -> np.ndarr
 def truncate_given_lca(gt: np.ndarray, pr: np.ndarray, lca: np.ndarray) -> np.ndarray:
     """Truncates the prediction if a descendant of the ground-truth."""
     return np.where(gt == lca, gt, pr)
+
+
+def format_tree(tree: Hierarchy, node_names: Optional[List[str]] = None, include_size: bool = False) -> str:
+    if node_names is None:
+        node_names = [str(i) for i in range(tree.num_nodes())]
+
+    node_to_children = tree.children()
+    node_sizes = tree.num_leaf_descendants()
+
+    # def subtree(node, prefix, is_last):
+    #     yield prefix + ('└── ' if is_last else '├── ') + node_names[node] + '\n'
+    #     children = node_to_children.get(node, ())
+    #     child_prefix = prefix + ('    ' if is_last else '│   ')
+    #     for i, child in enumerate(children):
+    #         child_is_last = (i == len(children) - 1)
+    #         yield from subtree(child, child_prefix, child_is_last)
+
+    def subtree(node, node_prefix, desc_prefix):
+        name = node_names[node]
+        size = node_sizes[node]
+        text = f'{name} ({size})' if include_size and size > 1 else name
+        yield node_prefix + text + '\n'
+        children = node_to_children.get(node, ())
+        for i, child in enumerate(children):
+            is_last = (i == len(children) - 1)
+            yield from subtree(
+                child,
+                node_prefix=desc_prefix + ('└── ' if is_last else '├── '),
+                desc_prefix=desc_prefix + ('    ' if is_last else '│   '))
+
+    return ''.join(subtree(0, '', ''))
