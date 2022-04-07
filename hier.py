@@ -1,8 +1,9 @@
 import collections
 import csv
 import itertools
-from typing import Callable, Collection, Dict, List, Optional, Sequence, TextIO, Tuple
+from typing import Callable, Collection, Dict, Hashable, List, Optional, Sequence, TextIO, Tuple
 
+import networkx as nx
 import numpy as np
 from numpy.typing import ArrayLike
 
@@ -164,10 +165,24 @@ class Hierarchy:
     def __str__(self, node_names: Optional[List[str]] = None) -> str:
         return format_tree(self, node_names)
 
+    def to_networkx(self, keys: Optional[List] = None) -> nx.DiGraph:
+        n = self.num_nodes()
+        g = nx.DiGraph()
+        if keys is None:
+            keys = list(range(n))
+        g.add_edges_from([(keys[i], keys[j]) for i, j in self.edges()])
+        return g
+
 
 def make_hierarchy_from_edges(
-        pairs : List[Tuple[str, str]],
+        pairs : Sequence[Tuple[str, str]],
         ) -> Tuple[Hierarchy, List[str]]:
+    """Creates a hierarchy from a list of name pairs.
+
+    The order of the edges determines the order of the nodes.
+    (Each node except the root appears once as a child.)
+    The root is placed first in the order.
+    """
     num_edges = len(pairs)
     num_nodes = num_edges + 1
     # Data structures to populate from list of pairs.
@@ -202,26 +217,66 @@ def load_edges(f: TextIO, delimiter=',') -> List[Tuple[str, str]]:
     return pairs
 
 
-def subtree(tree: Hierarchy, nodes: Collection[int]) -> Tuple[Hierarchy, np.ndarray, np.ndarray]:
+def rooted_subtree(tree: Hierarchy, nodes: np.ndarray) -> Hierarchy:
     """Finds the subtree that contains a subset of nodes."""
-    # Expand set of nodes to include all ancestors.
-    paths = tree.paths()
-    nodes = sorted(set(itertools.chain.from_iterable(paths[x] for x in nodes)))
-    if not nodes:
-        raise ValueError('empty tree')
-    nodes = np.asarray(nodes)
-    assert nodes[0] == 0  # Root should always be present.
-    reindex = {node: i for i, node in enumerate(nodes)}
-    reindex[-1] = -1  # Parent of root is -1.
+    # Check that root is present in subset.
+    assert nodes[0] == 0
+    # Construct a new list of parents.
+    reindex = np.full([tree.num_nodes()], -1)
+    reindex[nodes] = np.arange(len(nodes))
     parents = tree.parents()
-    subtree_parents = np.asarray([reindex[x] for x in parents[nodes]])
+    subtree_parents = np.where(parents[nodes] >= 0, reindex[parents[nodes]], -1)
+    assert np.all(subtree_parents[1:] >= 0), 'parent not in subset'
+    # Ensure that parent appears before child.
     assert np.all(subtree_parents < np.arange(len(nodes)))
-    subtree = Hierarchy(subtree_parents)
-    # Obtain projection from original node to index of nearest node in new tree.
-    proj = np.asarray([max(reindex[x] for x in path if x in reindex) for path in paths])
-    assert np.all(proj >= 0)
-    assert np.all(proj < subtree.num_nodes())
-    return subtree, nodes, proj
+    return Hierarchy(subtree_parents)
+
+
+def rooted_subtree_spanning(tree: Hierarchy, nodes: np.ndarray) -> Tuple[Hierarchy, np.ndarray]:
+    nodes = ancestors_union(tree, nodes)
+    subtree = rooted_subtree(tree, nodes)
+    return subtree, nodes
+
+
+def ancestors_union(tree: Hierarchy, node_subset: np.ndarray) -> np.ndarray:
+    """Returns union of ancestors of nodes."""
+    paths = tree.paths_padded(-1)
+    paths = paths[node_subset]
+    return np.unique(paths[paths >= 0])
+
+
+def find_subset_index(base: List[Hashable], subset: List[Hashable]) -> np.ndarray:
+    """Returns index of subset elements in base list (injective map)."""
+    name_to_index = {x: i for i, x in enumerate(base)}
+    return np.asarray([name_to_index[x] for x in subset], dtype=int)
+
+
+def find_projection(
+        tree: Hierarchy,
+        node_subset: np.ndarray) -> np.ndarray:
+    """Finds projection to nearest ancestor in subtree."""
+    # TODO: Only works for rooted sub-trees?
+    # Use paths rather than ancestor_mask to avoid large memory usage.
+    assert np.all(node_subset >= 0)
+    paths = tree.paths_padded(-1)
+    # Find index in subset.
+    reindex = np.full([tree.num_nodes()], -1)
+    reindex[node_subset] = np.arange(len(node_subset))
+    subset_paths = np.where(paths >= 0, reindex[paths], -1)
+    deepest = _last_nonzero(subset_paths >= 0, axis=1)
+    # Check that all ancestors are present.
+    # TODO: Could consider removing for non-rooted sub-trees?
+    assert np.all(np.count_nonzero(subset_paths >= 0, axis=1) - 1 == deepest)
+    return subset_paths[np.arange(tree.num_nodes()), deepest]
+
+
+def _last_nonzero(x, axis):
+    x = np.asarray(x, bool)
+    assert np.all(np.any(x, axis=axis)), 'at least one must be nonzero'
+    # Find last element that is true.
+    # (First element that is true in reversed array.)
+    n = x.shape[axis]
+    return (n - 1) - np.argmax(np.flip(x, axis), axis=axis)
 
 
 def uniform_leaf(tree: Hierarchy) -> np.ndarray:

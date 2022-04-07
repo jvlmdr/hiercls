@@ -14,7 +14,7 @@ def get_config():
         'model': 'torch_resnet18',
         'train_split': 'train',
         'train_labels': '',  # Override labels in dataset.
-        'train_subset': '',  # Subset of tree to use during training.
+        'train_subtree': '',  # Subset of tree to use during training.
         'eval_split': 'val',
         'hierarchy': 'tiny_imagenet_fiveai',
         'predict': 'flat_softmax',

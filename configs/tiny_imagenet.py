@@ -14,7 +14,7 @@ def get_config():
         'eval_transform': 'crop56',
 
         'train_with_leaf_targets': True,
-        'train_subset': '',
+        'train_subtree': '',
         'keep_examples': False,
         'train_labels': '',
 

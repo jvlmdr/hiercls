@@ -257,7 +257,7 @@ def make_datasets(config: ml_collections.ConfigDict):
     from labels to nodes will be taken from a corresponding file.
     This is required for e.g. ImageNet21k.
 
-    If `train_subset` is True, then a subtree is derived that contains those nodes.
+    If `train_subtree` is True, then a sub-tree is used during training.
     If `keep_examples` is False, then the examples are excluded.
     If `keep_examples` is True, then the examples are kept with projected labels.
     This requires that `train_with_leaf_targets` is False.
@@ -288,40 +288,44 @@ def make_datasets(config: ml_collections.ConfigDict):
         split=config.eval_split,
         transform_name=config.eval_transform)
 
-    if config.train_labels and config.train_subset:
-        raise ValueError('cannot both override labels and take subset of classes')
+    if config.train_labels and config.train_subtree:
+        raise ValueError('cannot both override labels and use sub-tree')
 
-    if config.train_subset:
-        # Take subtree using the subset of nodes.
-        assert hasattr(train_dataset, 'targets'), 'need targets to take class subset'
-        min_node_subset = load_node_subset(config.train_subset, node_names)
-        subtree, node_subset, project_to_subtree = hier.subtree(tree, min_node_subset)
-        node_names = [node_names[i] for i in node_subset]
-        if not config.keep_examples:
+    if config.train_subtree:
+        subtree, subtree_names = load_hierarchy(config.train_subtree, subdir='subtree')
+        node_subset = hier.find_subset_index(node_names, subtree_names)
+        project_to_subtree = hier.find_projection(tree, node_subset)
+        # Check whether labels all map to leaf nodes.
+        label_to_subtree_node = project_to_subtree[label_to_node]
+        label_is_leaf = subtree.leaf_mask()[label_to_subtree_node]
+        if not config.keep_examples and not np.all(label_is_leaf):
             # Take a subset of the train_dataset.
             # For each example, check whether the node was kept in the subtree.
+            assert hasattr(train_dataset, 'targets'), 'need targets to take subset of examples'
             example_subset, = np.nonzero(np.isin(label_to_node[train_dataset.targets], node_subset))
             train_dataset = torch.utils.data.Subset(train_dataset, example_subset)
         # Remap the labels in the training set for the subtree.
         if config.train_with_leaf_targets:
-            # We still want to use leaf targets for training.
-            # This is only possible if we exclude the examples from other classes.
-            assert not config.keep_examples, 'cannot keep examples and use leaf targets'
-            # During eval, we always keep all examples.
-            # This means that we cannot evaluate the loss during eval.
+            # We want to use leaf targets for training.
+            # This is only possible if labels are leaf nodes or non-leaf examples are excluded.
+            assert np.all(label_is_leaf) or not config.keep_examples, \
+                'cannot keep all examples and train with leaf targets'
+            # During eval, we do not exclude non-leaf examples.
+            # We can only evaluate the loss with leaf targets if all labels are leaf nodes.
+            label_to_subtree_label = _np_reverse_lookup_int(
+                subtree.leaf_subset(), label_to_subtree_node, default=-1)
             train_label_map = LabelMap(
-                to_node=project_to_subtree[label_to_node],
-                to_target=_np_reverse_lookup_int(
-                    subtree.leaf_subset(), project_to_subtree[label_to_node], default=-1))
+                to_node=label_to_subtree_node,
+                to_target=label_to_subtree_label)
             eval_label_map = LabelMap(
-                to_node=project_to_subtree[label_to_node],
-                to_target=None)
+                to_node=label_to_subtree_node,
+                to_target=label_to_subtree_label if np.all(label_is_leaf) else None)
         else:
             train_label_map = eval_label_map = LabelMap(
-                to_node=project_to_subtree[label_to_node],
-                to_target=project_to_subtree[label_to_node])
+                to_node=label_to_subtree_node,
+                to_target=label_to_subtree_node)
         # Replace tree with subtree.
-        tree = subtree
+        tree, node_names = subtree, subtree_names
 
     elif config.train_labels:
         # Replace the training dataset by a dataset with modified labels.
@@ -371,8 +375,8 @@ def make_datasets(config: ml_collections.ConfigDict):
     return train_dataset, eval_dataset, tree, node_names, train_label_map, eval_label_map
 
 
-def load_hierarchy(hierarchy_tag):
-    fname = SOURCE_DIR / f'resources/hierarchy/{hierarchy_tag}.csv'
+def load_hierarchy(hierarchy_tag, subdir='hierarchy'):
+    fname = SOURCE_DIR / f'resources/{subdir}/{hierarchy_tag}.csv'
     with open(fname) as f:
         tree, node_names = hier.make_hierarchy_from_edges(hier.load_edges(f))
     return tree, node_names
