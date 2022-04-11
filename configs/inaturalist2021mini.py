@@ -23,7 +23,7 @@ def get_config():
             'batch_size': 64,
             'num_epochs': 20,
             'warmup_epochs': 0,
-            'learning_rate': 0.1,
+            'learning_rate': 0.01,
             'momentum': 0.9,
             'weight_decay': 3e-4,
             'label_smoothing': 0.0,
