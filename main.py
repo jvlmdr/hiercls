@@ -300,9 +300,12 @@ def make_datasets(config: ml_collections.ConfigDict):
         label_is_leaf = subtree.leaf_mask()[label_to_subtree_node]
         if not config.keep_examples and not np.all(label_is_leaf):
             # Take a subset of the train_dataset.
-            # For each example, check whether the node was kept in the subtree.
+            # For each example, check whether the label is a leaf (in the sub-tree).
             assert hasattr(train_dataset, 'targets'), 'need targets to take subset of examples'
-            example_subset, = np.nonzero(np.isin(label_to_node[train_dataset.targets], node_subset))
+            # example_subset, = np.nonzero(np.isin(label_to_node[train_dataset.targets], node_subset))
+            example_subset, = np.nonzero(label_is_leaf[train_dataset.targets])
+            assert np.size(example_subset)
+            logging.info('exclude non-leaf examples: keep %d of %d', len(example_subset), len(train_dataset))
             train_dataset = torch.utils.data.Subset(train_dataset, example_subset)
         # Remap the labels in the training set for the subtree.
         if config.train_with_leaf_targets:
