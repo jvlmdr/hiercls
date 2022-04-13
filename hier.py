@@ -144,6 +144,7 @@ class Hierarchy:
             exclude_root: bool = False,
             exclude_self: bool = False,
             ) -> List[np.ndarray]:
+        # TODO: Could avoid potential high memory usage here using parents.
         is_descendant = self.ancestor_mask(strict=exclude_self).T
         if exclude_root:
             paths = [np.flatnonzero(mask) + 1 for mask in is_descendant[:, 1:]]
@@ -151,12 +152,17 @@ class Hierarchy:
             paths = [np.flatnonzero(mask) for mask in is_descendant]
         return paths
 
-    def paths_padded(self, value=-1, **kwargs) -> np.ndarray:
+    def paths_padded(self, pad_value=-1, method: str = 'constant', **kwargs) -> np.ndarray:
         n = self.num_nodes()
         paths = self.paths(**kwargs)
         path_lens = list(map(len, paths))
         max_len = max(path_lens)
-        padded = np.full((n, max_len), value, dtype=int)
+        if method == 'constant':
+            padded = np.full((n, max_len), pad_value, dtype=int)
+        elif method == 'self':
+            padded = np.tile(np.arange(n)[:, None], max_len)
+        else:
+            raise ValueError('unknown pad method', method)
         row_index = np.concatenate([np.full(n, i) for i, n in enumerate(path_lens)])
         col_index = np.concatenate([np.arange(n) for n in path_lens])
         padded[row_index, col_index] = np.concatenate(paths)
@@ -389,3 +395,70 @@ def format_tree(tree: Hierarchy, node_names: Optional[List[str]] = None, include
                 desc_prefix=desc_prefix + ('    ' if is_last else '│   '))
 
     return ''.join(subtree(0, '', ''))
+
+
+def level_nodes(tree: Hierarchy, extend: bool = False) -> List[np.ndarray]:
+    node_depth = tree.depths()
+    is_leaf = tree.leaf_mask()
+    max_depth = np.max(node_depth)
+    level_depth = np.arange(1, max_depth + 1)
+    if not extend:
+        level_masks = (level_depth[:, None] == node_depth)
+    else:
+        level_masks = ((level_depth[:, None] == node_depth) |
+                       ((level_depth[:, None] > node_depth) & is_leaf))
+    return [np.flatnonzero(mask) for mask in level_masks]
+
+
+def level_successors(tree: Hierarchy) -> Tuple[List[np.ndarray], List[List[np.ndarray]]]:
+    """Returns the list of parents and their children at each depth."""
+    node_depth = tree.depths()
+    max_depth = np.max(node_depth)
+    node_children = tree.children()
+
+    # Get internal nodes at each level.
+    level_parents = [[] for _ in range(max_depth)]
+    level_children = [[] for _ in range(max_depth)]
+    for u in tree.internal_subset():
+        d = node_depth[u]
+        level_parents[d].append(u)
+        level_children[d].append(node_children[u])
+    level_sizes = np.array(list(map(len, level_parents)))
+    assert np.all(level_sizes > 0)
+
+    level_parents = [np.array(x, dtype=int) for x in level_parents]
+    return level_parents, level_children
+
+
+def level_successors_padded(tree: Hierarchy,
+                            method: str = 'constant',
+                            constant_value: int = -1,
+                            ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Returns the list of parents and their children at each depth."""
+    level_parents, level_children = level_successors(tree)
+    level_children = [
+        _pad_2d(x, dtype=int, method=method, constant_value=constant_value)
+        for x in level_children
+    ]
+    return level_parents, level_children
+
+
+def _pad_2d(x: List[np.ndarray], dtype: np.dtype, method: str = 'constant', constant_value=None) -> np.ndarray:
+    num_rows = len(x)
+    row_lens = list(map(len, x))
+    num_cols = max(map(len, x))
+    if method == 'constant':
+        assert constant_value is not None
+        padded = np.full((num_rows, num_cols), constant_value, dtype=dtype)
+    elif method == 'first':
+        padded = np.tile(np.asarray([row[0] for row in x], dtype=dtype)[:, None], num_cols)
+    elif method == 'last':
+        padded = np.tile(np.asarray([row[-1] for row in x], dtype=dtype)[:, None], num_cols)
+    elif method == 'index':
+        padded = np.tile(np.arange(num_rows, dtype=dtype)[:, None], num_cols)
+    else:
+        raise ValueError('unknown pad method', method)
+    row_index = np.concatenate([np.full(row_len, i) for i, row_len in enumerate(row_lens)])
+    col_index = np.concatenate([np.arange(row_len) for row_len in row_lens])
+    padded[row_index, col_index] = np.concatenate(x)
+    return padded

@@ -58,7 +58,7 @@ flags.DEFINE_integer(
 flags.DEFINE_integer(
     'save_freq', 10, 'Frequency with which to save model and results (epochs).')
 flags.DEFINE_integer(
-    'loader_num_workers', 16, 'Number of data loaders (affects memory footprint).')
+    'loader_num_workers', 8, 'Number of data loaders (affects memory footprint).')
 flags.DEFINE_bool(
     'loader_pin_memory', False, 'Use page-locked memory in training data loader.')
 
@@ -412,6 +412,8 @@ def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
         num_outputs = tree.num_nodes() - 1
     elif predict == 'multilabel':
         num_outputs = tree.num_nodes() - 1
+    elif predict == 'levelwise_softmax':
+        num_outputs = sum(map(len, hier.level_nodes(tree, extend=True)))
     else:
         raise ValueError('unknown predict method', predict)
     return num_outputs
@@ -472,6 +474,15 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         loss_fn = hier_torch.MultiLabelNLL(
             tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(hier_torch.multilabel_likelihood, tree)
+
+    elif config.predict == 'levelwise_softmax':
+        assert config.train_with_leaf_targets, 'internal labels not supported'
+        loss_fn = hier_torch.LevelwiseSoftmaxNLL(
+            tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
+        pred_fn = partial(
+            lambda max_desc, log_softmax, theta: torch.exp(max_desc(log_softmax(theta))),
+            hier_torch.DescendantMax(tree).to(device),
+            hier_torch.LevelwiseLogSoftmax(tree).to(device))
 
     # elif config.predict == 'hier_sigmoid':
     #     if config.train.label_smoothing:

@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 import torch
@@ -44,7 +44,7 @@ class FlatLogSoftmax(nn.Module):
 
     def _apply(self, fn):
         super()._apply(fn)
-        self.is_ancestor_leaf = fn(self.is_ancestor_leaf).bool()  # Preserve dtype.
+        self.is_ancestor_leaf = fn(self.is_ancestor_leaf)
         return self
 
     def forward(self, scores: torch.Tensor) -> torch.Tensor:
@@ -67,13 +67,11 @@ class FlatLogSoftmaxNLL(nn.Module):
         # The value is_ancestor_leaf[i, k] is true if node i is an ancestor of leaf k.
         is_ancestor_leaf = is_ancestor[:, tree.leaf_mask()]
 
-        # TODO: May be important to avoid copying this to the device.
-        # However, overriding _apply() will change the dtype.
         self.is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf)
 
     def _apply(self, fn):
         super()._apply(fn)
-        self.is_ancestor_leaf = fn(self.is_ancestor_leaf).bool()  # Preserve dtype.
+        self.is_ancestor_leaf = fn(self.is_ancestor_leaf)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -128,20 +126,15 @@ class HierSoftmaxNLL(nn.Module):
 
     def _apply(self, fn):
         super()._apply(fn)
-        # Do not apply fn to indices because it might convert dtype.
+        self.label_order = _apply_or_none(fn, self.label_order)
         self.hier_log_softmax = self.hier_log_softmax._apply(fn)
         return self
 
-    @property
-    def device(self) -> torch.device:
-        return self.hier_log_softmax.device
-
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         # TODO: Could make this faster by only computing likelihood for targets.
-        device = self.device
         log_prob = self.hier_log_softmax(scores, dim=-1)
         if self.label_order is not None:
-            log_prob = torch.index_select(log_prob, -1, self.label_order.to(device))
+            log_prob = torch.index_select(log_prob, -1, self.label_order)
         nll = -torch.gather(log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
         return torch.mean(nll)
 
@@ -170,17 +163,16 @@ class HierSoftmaxCrossEntropy(nn.Module):
 
     def _apply(self, fn):
         super()._apply(fn)
-        # Do not apply fn to indices because it might convert dtype.
+        self.label_order = _apply_or_none(fn, self.label_order)
         self.hier_cond_log_softmax = self.hier_cond_log_softmax._apply(fn)
         self.sum_label_descendants = self.sum_label_descendants._apply(fn)
         self.prior = fn(self.prior)
-        self.node_weight = fn(self.node_weight) if self.node_weight is not None else None
+        self.node_weight = _apply_or_none(fn, self.node_weight)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
         assert labels.ndim in [scores.ndim, scores.ndim - 1]
         assert dim in (-1, scores.ndim - 1)
-        device = scores.device
         # Convert labels to one-hot if they are not.
         if labels.ndim < scores.ndim:
             labels = F.one_hot(labels, self.num_labels)
@@ -215,6 +207,7 @@ def hier_cond_log_softmax(
     cond_children = [node_to_children[x] for x in tree.internal_subset()]
     cond_num_children = list(map(len, cond_children))
     max_num_children = max(cond_num_children)
+    # TODO: Use _split_and_pad?
     row_index = np.concatenate([np.full(n, i) for i, n in enumerate(cond_num_children)])
     col_index = np.concatenate([np.arange(n) for n in cond_num_children])
     flat_index = row_index * max_num_children + col_index
@@ -264,6 +257,7 @@ class HierCondLogSoftmax(nn.Module):
         cond_children = [node_to_children[x] for x in tree.internal_subset()]
         cond_num_children = list(map(len, cond_children))
         max_num_children = max(cond_num_children)
+        # TODO: Use _split_and_pad?
         row_index = np.concatenate([np.full(n, i) for i, n in enumerate(cond_num_children)])
         col_index = np.concatenate([np.arange(n) for n in cond_num_children])
         flat_index = torch.from_numpy(row_index * max_num_children + col_index)
@@ -275,10 +269,11 @@ class HierCondLogSoftmax(nn.Module):
         self.flat_index = flat_index
         self.child_index = child_index
 
-    # def _apply(self, fn):
-    #     super()._apply(fn)
-    #     # Do not apply fn to indices because it might convert dtype.
-    #     return self
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.flat_index = fn(self.flat_index)
+        self.child_index = fn(self.child_index)
+        return self
 
     def forward(self, scores: torch.Tensor, dim: int = -1) -> torch.Tensor:
         assert dim in (-1, scores.ndim - 1)
@@ -286,19 +281,17 @@ class HierCondLogSoftmax(nn.Module):
         input_shape = list(scores.shape)
         flat_shape = [*input_shape[:-1], self.num_internal * self.max_num_children]
         # Pad with -inf for log_softmax.
-        flat_index = self.flat_index.to(device)
         # flat[..., flat_index] = scores
         flat = torch.full(flat_shape, -torch.inf, device=device).index_copy_(
-            -1, flat_index, scores)
+            -1, self.flat_index, scores)
         split_shape = [*input_shape[:-1], self.num_internal, self.max_num_children]
         child_scores = flat.reshape(split_shape)
         child_log_p = F.log_softmax(child_scores, dim=-1)
         child_log_p = child_log_p.reshape(flat_shape)
         output_shape = [*input_shape[:-1], self.num_nodes]
-        child_index = self.child_index.to(device)
         # log_cond_p[..., child_index] = child_log_p[..., flat_index]
         log_cond_p = torch.zeros(output_shape, device=device).index_copy_(
-            -1, child_index, child_log_p.index_select(-1, flat_index))
+            -1, self.child_index, child_log_p.index_select(-1, self.flat_index))
         return log_cond_p
 
 
@@ -316,51 +309,44 @@ class HierLogSoftmax(nn.Module):
         self.sum_ancestors_fn = self.sum_ancestors_fn._apply(fn)
         return self
 
-    @property
-    def device(self) -> torch.device:
-        return self.sum_ancestors_fn.device
-
     def forward(self, scores: torch.Tensor, dim: int = -1) -> torch.Tensor:
         log_cond_p = self.cond_log_softmax(scores, dim=dim)
         return self.sum_ancestors_fn(log_cond_p, dim=dim)
 
 
-class HierSoftmaxNLLWithInactive(nn.Module):
-    """Hierarchical softmax with loss for inactive nodes."""
-
-    def __init__(
-            self,
-            tree: hier.Hierarchy,
-            with_leaf_targets: bool = False):
-        super().__init__()
-        if with_leaf_targets:
-            self.label_order = torch.from_numpy(tree.leaf_subset())
-        else:
-            self.label_order = None
-        self.hier_log_softmax = HierLogSoftmax(tree)
-
-    def _apply(self, fn):
-        super()._apply(fn)
-        # Do not apply fn to indices because it might convert dtype.
-        self.hier_log_softmax = self.hier_log_softmax._apply(fn)
-        return self
-
-    @property
-    def device(self) -> torch.device:
-        return self.hier_log_softmax.device
-
-    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        # TODO: Could make this faster by only computing likelihood for targets.
-        device = self.device
-
-        # Log-sum-exp for each internal node.
-        self.logsumexp = {}
-
-        log_prob = self.hier_log_softmax(scores, dim=-1)
-        if self.label_order is not None:
-            log_prob = torch.index_select(log_prob, -1, self.label_order.to(device))
-        nll = -torch.gather(log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
-        return torch.mean(nll)
+# class HierSoftmaxNLLWithInactive(nn.Module):
+#     """Hierarchical softmax with loss for inactive nodes."""
+#
+#     def __init__(
+#             self,
+#             tree: hier.Hierarchy,
+#             with_leaf_targets: bool = False):
+#         super().__init__()
+#         if with_leaf_targets:
+#             self.label_order = torch.from_numpy(tree.leaf_subset())
+#         else:
+#             self.label_order = None
+#         self.hier_log_softmax = HierLogSoftmax(tree)
+#
+#     def _apply(self, fn):
+#         super()._apply(fn)
+#         # Do not apply fn to indices because it might convert dtype.
+#         self.label_order = _apply_or_none(fn, self.label_order)
+#         self.hier_log_softmax = self.hier_log_softmax._apply(fn)
+#         return self
+#
+#     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+#         # TODO: Could make this faster by only computing likelihood for targets.
+#         device = scores.device
+#
+#         # Log-sum-exp for each internal node.
+#         self.logsumexp = ()
+#
+#         log_prob = self.hier_log_softmax(scores, dim=-1)
+#         if self.label_order is not None:
+#             log_prob = torch.index_select(log_prob, -1, self.label_order.to(device))
+#         nll = -torch.gather(log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
+#         return torch.mean(nll)
 
 
 def leaf_put(
@@ -475,10 +461,6 @@ class Sum(nn.Module):
         self.matrix = fn(self.matrix)
         return self
 
-    @property
-    def device(self) -> torch.device:
-        return self.matrix.device
-
     def forward(self, values: torch.Tensor, dim: int = -1) -> torch.Tensor:
         # TODO: Re-order dimensions to make this work with dim != -1.
         assert dim in (-1, values.ndim - 1)
@@ -523,10 +505,6 @@ class MultiLabelNLL(nn.Module):
         self.binary_labels = fn(self.binary_labels)
         self.bce_loss = self.bce_loss._apply(fn)
         return self
-
-    @property
-    def device(self) -> torch.device:
-        return self.binary_labels.device
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
         targets = torch.index_select(self.binary_labels, 0, labels)
@@ -648,18 +626,14 @@ class BertinettoHXE(nn.Module):
         super()._apply(fn)
         self.weight = fn(self.weight)
         self.hier_cond_log_softmax_fn = self.hier_cond_log_softmax_fn._apply(fn)
+        self.label_order = _apply_or_none(fn, self.label_order)
         self.sum_ancestors_fn = self.sum_ancestors_fn._apply(fn)
         return self
-
-    @property
-    def device(self) -> torch.device:
-        return self.weight.device
 
     def forward(self,
                 scores: torch.Tensor,
                 labels: torch.Tensor,
                 dim: int = -1) -> torch.Tensor:
-        device = self.device
         log_cond_p = self.hier_cond_log_softmax_fn(scores, dim=dim)
         assert dim in (-1, scores.ndim - 1)
         # Take weighted sum over ancestors.
@@ -669,7 +643,263 @@ class BertinettoHXE(nn.Module):
         weighted_nll = self.sum_ancestors_fn(weighted_cond_nll, dim=dim)
         assert labels.ndim == scores.ndim - 1
         if self.label_order is not None:
-            weighted_nll = torch.index_select(
-                weighted_nll, dim, self.label_order.to(device))
+            weighted_nll = torch.index_select(weighted_nll, dim, self.label_order)
         label_nll = torch.gather(weighted_nll, dim, labels.unsqueeze(-1)).squeeze(-1)
         return torch.mean(label_nll)
+
+
+def levelwise_softmax_nll(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        with_leaf_targets: bool) -> torch.Tensor:
+    level_nodes = hier.level_nodes(tree, extend=True)
+    level_sizes = tuple(map(len, level_nodes))
+    num_levels = len(level_nodes)
+    # Construct map from node to index within softmax at each level.
+    node_to_level_target = np.full([num_levels, tree.num_nodes()], -1, dtype=int)
+    for i in range(num_levels):
+        node_to_level_target[i, level_nodes[i]] = np.arange(level_sizes[i])
+
+    # Get label set.
+    if with_leaf_targets:
+        label_to_node = tree.leaf_subset()
+    else:
+        label_to_node = np.arange(tree.num_nodes())
+    # Find mapping from label to index within softmax (of ancestor) at each level.
+    paths = tree.paths_padded(method='self', exclude_root=True)
+    label_to_level_target = np.full([num_levels, len(label_to_node)], -1, dtype=int)
+    for i in range(num_levels):
+        label_to_level_target[i, :] = node_to_level_target[i, paths[label_to_node, i]]
+        # Every label should correspond to a valid target.
+        # Note that this will fail for non-leaf targets.
+        # TODO: Implement no loss for descendants of label? (for non-leaf targets)
+        assert np.all(label_to_level_target[i, :] >= 0)
+        assert np.all(label_to_level_target[i, :] < level_sizes[i])
+
+    label_to_level_target = torch.from_numpy(label_to_level_target).to(scores.device)
+
+    level_scores = torch.split(scores, level_sizes, dim=-1)
+    level_targets = label_to_level_target[:, labels].unbind(0)
+    # Dense, padded implementation:
+    # level_scores = _split_and_pad(scores, level_sizes, -torch.inf, dim=-1)
+    # level_logp = F.log_softmax(level_scores, dim=-1)
+    # level_nll = -_gather_2d(level_logp, j=level_targets)
+    level_nll = torch.stack(
+        [F.cross_entropy(x, y, reduction='none') for x, y in zip(level_scores, level_targets)],
+        dim=-1)
+    mean_nll = torch.mean(level_nll, dim=-1)
+    return torch.mean(mean_nll)
+
+
+class LevelwiseSoftmaxNLL(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False):
+        super().__init__()
+        node_depth = tree.depths()
+        level_nodes = hier.level_nodes(tree, extend=True)
+        level_sizes = tuple(map(len, level_nodes))
+        num_levels = len(level_nodes)
+        # Construct map from node to index within softmax at each level.
+        node_to_level_target = np.full([num_levels, tree.num_nodes()], -1, dtype=int)
+        for i in range(num_levels):
+            node_to_level_target[i, level_nodes[i]] = np.arange(level_sizes[i])
+
+        # Get label set.
+        if with_leaf_targets:
+            label_to_node = tree.leaf_subset()
+        else:
+            label_to_node = np.arange(tree.num_nodes())
+        # Find mapping from label to index within softmax (of ancestor) at each level.
+        paths = tree.paths_padded(method='self', exclude_root=True)
+        label_to_level_target = np.full([num_levels, len(label_to_node)], -1, dtype=int)
+        for i in range(num_levels):
+            label_to_level_target[i, :] = node_to_level_target[i, paths[label_to_node, i]]
+            # Every label should correspond to a valid target.
+            # Note that this will fail for non-leaf targets.
+            # TODO: Implement no loss for descendants of label? (for non-leaf targets)
+            assert np.all(label_to_level_target[i, :] >= 0)
+            assert np.all(label_to_level_target[i, :] < level_sizes[i])
+
+        self.level_sizes = level_sizes
+        self.label_to_level_target = torch.from_numpy(label_to_level_target)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.label_to_level_target = fn(self.label_to_level_target)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        level_scores = torch.split(scores, self.level_sizes, dim=-1)
+        level_targets = self.label_to_level_target[:, labels].unbind(0)
+        # Dense, padded implementation:
+        # level_scores = _split_and_pad(scores, level_sizes, -torch.inf, dim=-1)
+        # level_logp = F.log_softmax(level_scores, dim=-1)
+        # level_nll = -_gather_2d(level_logp, j=level_targets)
+        level_nll = torch.stack(
+            [F.cross_entropy(x, y, reduction='none') for x, y in zip(level_scores, level_targets)],
+            dim=-1)
+        mean_nll = torch.mean(level_nll, dim=-1)
+        return torch.mean(mean_nll)
+
+
+def levelwise_log_softmax(tree: hier.Hierarchy, scores: torch.Tensor) -> torch.Tensor:
+    batch_dims = tuple(scores.shape[:-1])
+    num_nodes = tree.num_nodes()
+    level_nodes = hier.level_nodes(tree, extend=True)
+    level_sizes = tuple(map(len, level_nodes))
+
+    level_scores = torch.split(scores, level_sizes, dim=-1)
+    level_logp = [F.log_softmax(x, dim=-1) for x in level_scores]
+    # Take probability of each node at its level.
+    # Note that node may appear at multiple levels.
+    # Perform in reverse order such that shallow overwrites deep.
+    logp = torch.full((*batch_dims, num_nodes), -torch.inf, dtype=scores.dtype, device=scores.device)
+    for i in reversed(range(len(level_nodes))):
+        logp.index_copy_(-1, level_nodes[i], level_logp[i])
+    logp.index_fill_(-1, torch.zeros((), dtype=int, device=scores.device), 0.)
+    return logp
+
+
+class LevelwiseLogSoftmax(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy):
+        super().__init__()
+        num_nodes = tree.num_nodes()
+        level_nodes = hier.level_nodes(tree, extend=True)
+        level_sizes = tuple(map(len, level_nodes))
+
+        self.num_nodes = num_nodes
+        self.level_sizes = level_sizes
+        self.level_nodes = list(map(torch.from_numpy, level_nodes))
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.level_nodes = list(map(fn, self.level_nodes))
+        return self
+
+    def forward(self, scores: torch.Tensor) -> torch.Tensor:
+        num_levels = len(self.level_nodes)
+        batch_dims = tuple(scores.shape[:-1])
+        level_scores = torch.split(scores, self.level_sizes, dim=-1)
+        level_logp = [F.log_softmax(x, dim=-1) for x in level_scores]
+        # Take probability of each node at its level.
+        # Note that node may appear at multiple levels.
+        # Perform in reverse order such that shallow overwrites deep.
+        logp = torch.full((*batch_dims, self.num_nodes), -torch.inf, dtype=scores.dtype, device=scores.device)
+        for i in reversed(range(num_levels)):
+            logp.index_copy_(-1, self.level_nodes[i], level_logp[i])
+        logp.index_fill_(-1, torch.zeros((), dtype=int, device=scores.device), 0.)
+        return logp
+
+
+# def descendant_max(tree: hier.Hierarchy, x: torch.Tensor) -> torch.Tensor:
+#     # TODO: Avoid high memory usage.
+#     # Maybe this could be done with a (parent[i], children[i, j]) array per depth,
+#     # where children is padded.
+#     is_ancestor = torch.from_numpy(tree.ancestor_mask()).to(device=x.device)
+#     neg_inf = torch.full((), -torch.inf, dtype=x.dtype, device=x.device)
+#     descendant_values = torch.where(is_ancestor, x.unsqueeze(-1), neg_inf)
+#     max_value, _ = torch.max(descendant_values, dim=-1)
+#     return max_value
+
+
+def descendant_max(tree: hier.Hierarchy, x: torch.Tensor) -> torch.Tensor:
+    """Finds the max over all descendants of each node."""
+    level_parents, level_children = hier.level_successors_padded(tree, method='last')
+    level_parents = list(map(torch.from_numpy, level_parents))
+    level_children = list(map(torch.from_numpy, level_children))
+    num_levels = len(level_parents)
+    out = x.clone()
+    # Work up from the maximum depth, taking max of node and its children.
+    for i in reversed(range(num_levels)):
+        # child_values = _index_select(out, -1, level_children[i])
+        child_values = out[..., level_children[i]]
+        max_child_value, _ = torch.max(child_values, dim=-1)
+        out.index_copy_(
+            -1, level_parents[i],
+            torch.maximum(out[..., level_parents[i]], max_child_value))
+    return out
+
+
+class DescendantMax(nn.Module):
+    """Finds the max over all descendants of each node."""
+
+    def __init__(self, tree: hier.Hierarchy):
+        super().__init__()
+        level_parents, level_children = hier.level_successors_padded(tree, method='last')
+        self.level_parents = list(map(torch.from_numpy, level_parents))
+        self.level_children = list(map(torch.from_numpy, level_children))
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.level_parents = list(map(fn, self.level_parents))
+        self.level_children = list(map(fn, self.level_children))
+        return self
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        num_levels = len(self.level_parents)
+        out = x.clone()
+        # Work up from the maximum depth, taking max of node and its children.
+        for i in reversed(range(num_levels)):
+            # child_values = _index_select(out, -1, level_children[i])
+            child_values = out[..., self.level_children[i]]
+            max_child_value, _ = torch.max(child_values, dim=-1)
+            out.index_copy_(
+                -1, self.level_parents[i],
+                torch.maximum(out[..., self.level_parents[i]], max_child_value))
+        return out
+
+
+
+def _index_select(x: torch.Tensor, dim: int, index: torch.Tensor) -> torch.Tensor:
+    """Like Tensor.index_select, but supports multi-dimensional index.
+
+    Note: When dim is -1, can use Tensor[..., index] instead.
+    """
+    index_shape = tuple(index.shape)
+    input_shape = tuple(x.shape)
+    flat_index = index.reshape(-1)
+    flat_out = x.index_select(dim, flat_index)
+    out_shape = input_shape[:dim] + index_shape + input_shape[dim:][1:]
+    out = flat_out.reshape(*out_shape)
+    return out
+
+
+def _split_and_pad(x: torch.Tensor, sizes: List[int], pad_value, dim: int = -1) -> torch.Tensor:
+    assert dim in (-1, x.ndim - 1)
+    assert sum(sizes) == x.shape[-1]
+    max_size = max(sizes)
+    row_index = np.concatenate([np.full(n, i) for i, n in enumerate(sizes)])
+    col_index = np.concatenate([np.arange(n) for n in sizes])
+    flat_index = row_index * max_size + col_index
+
+    input_shape = tuple(x.shape)
+    flat_shape = (*input_shape[:-1], len(sizes) * max_size)
+    split_shape = (*input_shape[:-1], len(sizes), max_size)
+    return (
+        torch.full(flat_shape, pad_value, device=x.device)
+        .index_copy_(-1, flat_index, x)
+        .reshape(split_shape))
+
+
+def _gather_2d(
+        x: torch.Tensor,
+        i: Optional[np.ndarray] = None,
+        j: Optional[np.ndarray] = None):
+    """Performs gather on the last two dimensions."""
+    assert x.ndim >= 2
+    input_shape = tuple(x.shape)
+    m, n = input_shape[-2:]
+    i = np.arange(m) if i is None else i
+    j = np.arange(j) if j is None else j
+    assert np.all(0 <= i)
+    assert np.all(i < m)
+    assert np.all(0 <= j)
+    assert np.all(j < n)
+    flat_shape = (*input_shape[:-2], m * n)
+    return x.reshape(x, flat_shape).gather(-1, i * n + j)
+
+
+def _apply_or_none(fn: Callable, x: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+    return fn(x) if x is not None else None
