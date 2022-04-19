@@ -492,22 +492,22 @@ class MultiLabelNLL(nn.Module):
         # The boolean array binary_labels[i, :] indicates whether
         # each node is an ancestor of node i (including i itself).
         # The root node is excluded since it is always positive.
-        binary_labels = tree.ancestor_mask(strict=False).T[:, 1:]
+        binary_targets = tree.ancestor_mask(strict=False).T[:, 1:]
         if with_leaf_targets:
-            binary_labels = binary_labels[tree.leaf_subset(), :]
+            binary_targets = binary_targets[tree.leaf_subset(), :]
 
         dtype = torch.get_default_dtype()
-        self.binary_labels = torch.from_numpy(binary_labels).type(dtype)
+        self.binary_targets = torch.from_numpy(binary_targets).type(dtype)
         self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
 
     def _apply(self, fn):
         super()._apply(fn)
-        self.binary_labels = fn(self.binary_labels)
+        self.binary_targets = fn(self.binary_targets)
         self.bce_loss = self.bce_loss._apply(fn)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
-        targets = torch.index_select(self.binary_labels, 0, labels)
+        targets = torch.index_select(self.binary_targets, 0, labels)
         # Reduce over classes.
         loss = torch.sum(self.bce_loss(scores, targets), dim=dim)
         # Take mean over examples.
@@ -688,7 +688,7 @@ def levelwise_softmax_nll(
     level_nll = torch.stack(
         [F.cross_entropy(x, y, reduction='none') for x, y in zip(level_scores, level_targets)],
         dim=-1)
-    mean_nll = torch.mean(level_nll, dim=-1)
+    mean_nll = torch.sum(level_nll, dim=-1)
     return torch.mean(mean_nll)
 
 
@@ -739,7 +739,7 @@ class LevelwiseSoftmaxNLL(nn.Module):
         level_nll = torch.stack(
             [F.cross_entropy(x, y, reduction='none') for x, y in zip(level_scores, level_targets)],
             dim=-1)
-        mean_nll = torch.mean(level_nll, dim=-1)
+        mean_nll = torch.sum(level_nll, dim=-1)
         return torch.mean(mean_nll)
 
 
