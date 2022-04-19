@@ -15,7 +15,7 @@ def get_config():
 
         'train_with_leaf_targets': True,
         'train_subtree': '',
-        'keep_examples': False,
+        'filter_subtree': '',
         'train_labels': '',
 
         # Config for training algorithm.
