@@ -297,20 +297,24 @@ def make_datasets(config: ml_collections.ConfigDict):
         # If filter subtree is given with no label subtree, it will be used for labels.
         # If label subtree is given with no filter subtree, all examples will be kept.
         if config.filter_subtree:
+            # TODO: Maybe it makes more sense to specify a set of nodes for the filter.
+            # However, it is convenient to be able to pass a tree and use for train_subtree.
             filter_subtree, filter_subtree_names = load_hierarchy(config.filter_subtree, subdir='subtree')
             filter_node_subset = hier.find_subset_index(node_names, filter_subtree_names)
             project_to_filter_subtree = hier.find_projection(tree, filter_node_subset)
-            # Keep labels that are leaf nodes in the subtree.
-            label_mask = filter_subtree.leaf_mask()[project_to_filter_subtree[label_to_node]]
-            assert np.any(label_mask)
+            # TODO: Add option like filter_project_and_keep_leaf for this?
+            # # Keep labels that are leaf nodes in the subtree.
+            # label_mask = filter_subtree.leaf_mask()[project_to_filter_subtree[label_to_node]]
+            # Keep labels that are present in subtree.
+            label_mask = np.isin(label_to_node, filter_node_subset)
             # Take a subset of the train_dataset.
             assert hasattr(train_dataset, 'targets'), 'need targets to take subset of examples'
-            # example_subset, = np.nonzero(np.isin(label_to_node[train_dataset.targets], filter_node_subset))
             example_mask = label_mask[train_dataset.targets]
-            assert np.any(example_mask)
             logging.info('filter subtree: keep %d of %d labels, %d of %d examples',
                          np.sum(label_mask), len(label_mask),
                          np.sum(example_mask), len(example_mask))
+            assert np.any(label_mask)
+            assert np.any(example_mask)
             example_subset, = np.nonzero(example_mask)
             train_dataset = torch.utils.data.Subset(train_dataset, example_subset)
         else:
@@ -325,15 +329,19 @@ def make_datasets(config: ml_collections.ConfigDict):
         project_to_subtree = hier.find_projection(tree, node_subset)
         label_to_subtree_node = project_to_subtree[label_to_node]
         # Check whether all labels project to leaf nodes in the label subtree.
-        every_label_is_leaf = np.all(subtree.leaf_mask()[label_to_subtree_node[label_mask]])
+        is_subtree_leaf = subtree.leaf_mask()
+        every_label_is_leaf = np.all(is_subtree_leaf[label_to_subtree_node])
+        every_train_label_is_leaf = np.all(is_subtree_leaf[label_to_subtree_node[label_mask]])
         if config.train_with_leaf_targets:
-            assert every_label_is_leaf
+            assert every_train_label_is_leaf
             # Adopt leaf order in subtree as label order.
             label_to_subtree_label = _np_reverse_lookup_int(
                 subtree.leaf_subset(), label_to_subtree_node, default=-1)
             train_label_map = LabelMap(
                 to_node=label_to_subtree_node,
                 to_target=label_to_subtree_label)
+            # Since eval dataset is not filtered, require that *all* labels are
+            # leaf targets to evaluate loss.
             eval_label_map = LabelMap(
                 to_node=label_to_subtree_node,
                 to_target=label_to_subtree_label if every_label_is_leaf else None)
@@ -459,14 +467,14 @@ def load_labels(labels_tag, node_names):
 def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
     if predict == 'flat_softmax':
         num_outputs = tree.num_leaf_nodes()
-    elif predict == 'hier_softmax':
+    elif predict in ('hier_softmax', 'bertinetto_hxe'):
         num_outputs = tree.num_nodes() - 1
-    elif predict == 'bertinetto_hxe':
-        num_outputs = tree.num_nodes() - 1
-    elif predict == 'multilabel':
+    elif predict in ('multilabel', 'multilabel_focal'):
         num_outputs = tree.num_nodes() - 1
     elif predict == 'levelwise_softmax':
         num_outputs = sum(map(len, hier.level_nodes(tree, extend=True)))
+    elif predict == 'max_cut_softmax':
+        num_outputs = tree.num_nodes()
     else:
         raise ValueError('unknown predict method', predict)
     return num_outputs
@@ -528,6 +536,14 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(hier_torch.multilabel_likelihood, tree)
 
+    elif config.predict == 'multilabel_focal':
+        if config.train.label_smoothing:
+            raise NotImplementedError
+        loss_fn = hier_torch.MultiLabelFocalLoss(
+            tree, with_leaf_targets=config.train_with_leaf_targets,
+            alpha=config.train.focal_alpha, gamma=config.train.focal_gamma).to(device)
+        pred_fn = partial(hier_torch.multilabel_likelihood, tree)
+
     elif config.predict == 'levelwise_softmax':
         assert config.train_with_leaf_targets, 'internal labels not supported'
         loss_fn = hier_torch.LevelwiseSoftmaxNLL(
@@ -536,6 +552,13 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             lambda max_desc, log_softmax, theta: torch.exp(max_desc(log_softmax(theta))),
             hier_torch.DescendantMax(tree).to(device),
             hier_torch.LevelwiseLogSoftmax(tree).to(device))
+
+    elif config.predict == 'max_cut_softmax':
+        loss_fn = hier_torch.MaxCutSoftmaxLoss(
+            tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
+        pred_fn = partial(
+            lambda log_softmax, theta: torch.exp(log_softmax(theta)),
+            hier_torch.MaxCutLogSoftmax(tree).to(device))
 
     # elif config.predict == 'hier_sigmoid':
     #     if config.train.label_smoothing:

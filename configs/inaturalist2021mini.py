@@ -29,5 +29,7 @@ def get_config():
             'label_smoothing': 0.0,
             'hxe_alpha': 0.0,
             'hier_normalize': '',
+            'focal_alpha': 0.25,
+            'focal_gamma': 2.0,
         }),
     })

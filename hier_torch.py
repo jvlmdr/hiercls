@@ -1,10 +1,11 @@
 from functools import partial
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
+import torchvision
 
 import hier
 
@@ -489,7 +490,7 @@ class MultiLabelNLL(nn.Module):
 
     def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False):
         super().__init__()
-        # The boolean array binary_labels[i, :] indicates whether
+        # The boolean array binary_targets[i, :] indicates whether
         # each node is an ancestor of node i (including i itself).
         # The root node is excluded since it is always positive.
         binary_targets = tree.ancestor_mask(strict=False).T[:, 1:]
@@ -510,6 +511,37 @@ class MultiLabelNLL(nn.Module):
         targets = torch.index_select(self.binary_targets, 0, labels)
         # Reduce over classes.
         loss = torch.sum(self.bce_loss(scores, targets), dim=dim)
+        # Take mean over examples.
+        return torch.mean(loss)
+
+
+class MultiLabelFocalLoss(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy, alpha: float, gamma: float, with_leaf_targets: bool = False):
+        super().__init__()
+        # The boolean array binary_targets[i, :] indicates whether
+        # each node is an ancestor of node i (including i itself).
+        # The root node is excluded since it is always positive.
+        binary_targets = tree.ancestor_mask(strict=False).T[:, 1:]
+        if with_leaf_targets:
+            binary_targets = binary_targets[tree.leaf_subset(), :]
+
+        dtype = torch.get_default_dtype()
+        self.binary_targets = torch.from_numpy(binary_targets).type(dtype)
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.binary_targets = fn(self.binary_targets)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        targets = torch.index_select(self.binary_targets, 0, labels)
+        binary_loss = torchvision.ops.sigmoid_focal_loss(
+            scores, targets, alpha=self.alpha, gamma=self.gamma, reduction='none')
+        # Reduce over classes.
+        loss = torch.sum(binary_loss, dim=dim)
         # Take mean over examples.
         return torch.mean(loss)
 
@@ -851,7 +883,6 @@ class DescendantMax(nn.Module):
         return out
 
 
-
 def _index_select(x: torch.Tensor, dim: int, index: torch.Tensor) -> torch.Tensor:
     """Like Tensor.index_select, but supports multi-dimensional index.
 
@@ -899,6 +930,192 @@ def _gather_2d(
     assert np.all(j < n)
     flat_shape = (*input_shape[:-2], m * n)
     return x.reshape(x, flat_shape).gather(-1, i * n + j)
+
+
+def max_cut_logsumexp(tree: hier.Hierarchy, scores: torch.Tensor) -> torch.Tensor:
+    """Finds the max over all descendants of each node."""
+    parents, children = hier.level_successors(tree)
+    num_levels = len(parents)
+    num_parents = [len(parents[d]) for d in range(num_levels)]
+    num_children = [[len(ch) for ch in children[d]] for d in range(num_levels)]
+    max_num_children = [max(num_children[d]) for d in range(num_levels)]
+    flat_inputs_index = [None] * num_levels
+    for d in range(num_levels):
+        i, j = ragged_to_sparse_index(num_children[d])
+        flat_inputs_index[d] = i * max_num_children[d] + j
+    concat_children = [np.concatenate(children[d]) for d in range(num_levels)]
+
+    parents = list(map(torch.from_numpy, parents))
+    flat_inputs_index = list(map(torch.from_numpy, flat_inputs_index))
+    concat_children = list(map(torch.from_numpy, concat_children))
+
+    fn = partial(torch.Tensor.to, device=scores.device)
+    parents = list(map(fn, parents))
+    flat_inputs_index = list(map(fn, flat_inputs_index))
+    concat_children = list(map(fn, concat_children))
+
+    batch_dims = tuple(scores.shape[:-1])
+    out = scores.clone()
+    for d in reversed(range(num_levels)):
+        flat_inputs = torch.full(
+            (*batch_dims, num_parents[d] * max_num_children[d]),
+            -torch.inf, device=scores.device)
+        flat_inputs.index_copy_(
+            -1, flat_inputs_index[d], out[..., concat_children[d]])
+        inputs = flat_inputs.reshape(*batch_dims, num_parents[d], max_num_children[d])
+        logsumexp = torch.logsumexp(inputs, dim=-1)
+        out.index_copy_(
+            -1, parents[d], torch.maximum(out[..., parents[d]], logsumexp))
+
+    return out
+
+
+class MaxCutLogSumExp(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy):
+        super().__init__()
+        parents, children = hier.level_successors(tree)
+        num_levels = len(parents)
+        num_parents = [len(parents[d]) for d in range(num_levels)]
+        num_children = [[len(ch) for ch in children[d]] for d in range(num_levels)]
+        max_num_children = [max(num_children[d]) for d in range(num_levels)]
+        flat_inputs_index = [None] * num_levels
+        for d in range(num_levels):
+            i, j = ragged_to_sparse_index(num_children[d])
+            flat_inputs_index[d] = i * max_num_children[d] + j
+        concat_children = [np.concatenate(children[d]) for d in range(num_levels)]
+
+        self.num_parents = num_parents
+        # self.num_children = num_children
+        self.max_num_children = max_num_children
+        self.parents = list(map(torch.from_numpy, parents))
+        self.flat_inputs_index = list(map(torch.from_numpy, flat_inputs_index))
+        self.concat_children = list(map(torch.from_numpy, concat_children))
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.parents = list(map(fn, self.parents))
+        self.flat_inputs_index = list(map(fn, self.flat_inputs_index))
+        self.concat_children = list(map(fn, self.concat_children))
+        return self
+
+    def forward(self, scores: torch.Tensor) -> torch.Tensor:
+        """Finds the max over all descendants of each node."""
+        num_levels = len(self.parents)
+        batch_dims = tuple(scores.shape[:-1])
+        out = scores.clone()
+        for d in reversed(range(num_levels)):
+            flat_inputs = torch.full(
+                (*batch_dims, self.num_parents[d] * self.max_num_children[d]),
+                -torch.inf, device=scores.device)
+            flat_inputs.index_copy_(
+                -1, self.flat_inputs_index[d], out[..., self.concat_children[d]])
+            inputs = flat_inputs.reshape(*batch_dims, self.num_parents[d], self.max_num_children[d])
+            logsumexp = torch.logsumexp(inputs, dim=-1)
+            out.index_copy_(
+                -1, self.parents[d], torch.maximum(out[..., self.parents[d]], logsumexp))
+        return out
+
+
+def max_cut_log_softmax(tree: hier.Hierarchy, scores: torch.Tensor) -> torch.Tensor:
+    """Finds the max over all descendants of each node."""
+    log_z = max_cut_logsumexp(tree, scores)
+    return log_z - log_z[..., [0]]
+
+
+class MaxCutLogSoftmax(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy):
+        super().__init__()
+        self.max_cut_logsumexp = MaxCutLogSumExp(tree)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.max_cut_logsumexp = self.max_cut_logsumexp._apply(fn)
+        return self
+
+    def forward(self, scores: torch.Tensor) -> torch.Tensor:
+        log_z = self.max_cut_logsumexp(scores)
+        return log_z - log_z[..., [0]]
+
+
+def max_cut_softmax_loss(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        with_leaf_targets: bool) -> torch.Tensor:
+    label_paths = tree.paths_padded()
+    label_depths = tree.depths()
+    if with_leaf_targets:
+        label_order = tree.leaf_subset()
+        label_paths = label_paths[label_order, :]
+        label_depths = label_depths[label_order]
+
+    label_paths = torch.from_numpy(label_paths).to(scores.device)
+    label_depths = torch.from_numpy(label_depths).to(scores.device)
+
+    # Get energy for each node.
+    log_energy = max_cut_logsumexp(tree, scores)
+    # Get log partition function (root energy).
+    log_z = log_energy[..., 0]
+    depth = label_depths[labels]
+    ancestors = label_paths[labels]
+    ancestors_valid = torch.where(ancestors >= 0, ancestors, 0)
+    zero = torch.zeros((), device=scores.device)
+    sum_ancestor_scores = torch.sum(
+        torch.where(ancestors >= 0, scores.gather(-1, ancestors_valid), zero),
+        dim=-1)
+    num_ancestors = depth + 1
+    loss = torch.sqrt(num_ancestors) * (log_z - sum_ancestor_scores / num_ancestors)
+    # loss = num_ancestors * log_z - sum_ancestor_scores
+    return torch.mean(loss)
+
+
+class MaxCutSoftmaxLoss(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool):
+        super().__init__()
+        label_paths = tree.paths_padded()
+        label_depths = tree.depths()
+        if with_leaf_targets:
+            label_order = tree.leaf_subset()
+            label_paths = label_paths[label_order, :]
+            label_depths = label_depths[label_order]
+        self.label_paths = torch.from_numpy(label_paths)
+        self.label_depths = torch.from_numpy(label_depths)
+        self.max_cut_logsumexp = MaxCutLogSumExp(tree)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.label_paths = fn(self.label_paths)
+        self.label_depths = fn(self.label_depths)
+        self.max_cut_logsumexp = self.max_cut_logsumexp._apply(fn)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        # Get energy for each node.
+        log_energy = self.max_cut_logsumexp(scores)
+        # Get log partition function (root energy).
+        log_z = log_energy[..., 0]
+        depth = self.label_depths[labels]
+        ancestors = self.label_paths[labels]
+        ancestors_valid = torch.where(ancestors >= 0, ancestors, 0)
+        zero = torch.zeros((), device=scores.device)
+        sum_ancestor_scores = torch.sum(
+            torch.where(ancestors >= 0, scores.gather(-1, ancestors_valid), zero),
+            dim=-1)
+        num_ancestors = depth + 1
+        loss = torch.sqrt(num_ancestors) * (log_z - sum_ancestor_scores / num_ancestors)
+        # loss = num_ancestors * log_z - sum_ancestor_scores
+        return torch.mean(loss)
+
+
+def ragged_to_sparse_index(row_lens: List[int]) -> Tuple[np.ndarray, np.ndarray]:
+    row = [np.full(row_len, i) for i, row_len in enumerate(row_lens)]
+    col = [np.arange(row_len) for row_len in row_lens]
+    concat_row = np.concatenate(row)
+    concat_col = np.concatenate(col)
+    return concat_row, concat_col
 
 
 def _apply_or_none(fn: Callable, x: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
