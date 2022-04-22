@@ -1091,7 +1091,12 @@ def max_cut_softmax_loss(
 
 class MaxCutSoftmaxLoss(nn.Module):
 
-    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool, max_reduction: str = 'max'):
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            with_leaf_targets: bool,
+            max_reduction: str = 'max',
+            node_weight: Optional[torch.Tensor] = None):
         super().__init__()
         label_paths = tree.paths_padded()
         label_depths = tree.depths()
@@ -1102,12 +1107,14 @@ class MaxCutSoftmaxLoss(nn.Module):
         self.label_paths = torch.from_numpy(label_paths)
         self.label_depths = torch.from_numpy(label_depths)
         self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
+        self.node_weight = node_weight
 
     def _apply(self, fn):
         super()._apply(fn)
         self.label_paths = fn(self.label_paths)
         self.label_depths = fn(self.label_depths)
         self.max_cut_logsumexp = self.max_cut_logsumexp._apply(fn)
+        self.node_weight = _apply_or_none(fn, self.node_weight)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -1115,16 +1122,16 @@ class MaxCutSoftmaxLoss(nn.Module):
         log_energy = self.max_cut_logsumexp(scores)
         # Get log partition function (root energy).
         log_z = log_energy[..., 0]
-        depth = self.label_depths[labels]
         ancestors = self.label_paths[labels]
-        ancestors_valid = torch.where(ancestors >= 0, ancestors, 0)
-        zero = torch.zeros((), device=scores.device)
-        ancestor_scores = torch.where(ancestors >= 0, scores.gather(-1, ancestors_valid), zero)
-        sum_ancestor_scores = torch.sum(ancestor_scores, dim=-1)
-        num_ancestors = depth + 1
-        # loss = torch.sqrt(num_ancestors) * (log_z - sum_ancestor_scores / num_ancestors)
-        loss = num_ancestors * log_z - sum_ancestor_scores
-        # loss = log_z - ancestor_scores.index_select(-1, depth)
+        # depth = self.label_depths[labels]
+        mask = (ancestors >= 0)
+        ancestors = torch.where(mask, ancestors, 0)
+        ancestor_scores = scores.gather(-1, ancestors)
+        loss = log_z.unsqueeze(-1) - ancestor_scores
+        if self.node_weight is not None:
+            loss = loss * self.node_weight[ancestors]
+        loss = torch.where(mask, loss, torch.tensor(0., device=scores.device))
+        loss = torch.sum(loss, dim=-1)
         return torch.mean(loss)
 
 

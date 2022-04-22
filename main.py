@@ -561,8 +561,10 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             hier_torch.MaxCutLogSoftmax(tree).to(device))
 
     elif config.predict == 'descendant_softmax':
+        node_weight = torch.from_numpy(1. / tree.num_leaf_descendants()).float()
         loss_fn = hier_torch.MaxCutSoftmaxLoss(
-            tree, with_leaf_targets=config.train_with_leaf_targets, max_reduction='logsumexp').to(device)
+            tree, with_leaf_targets=config.train_with_leaf_targets,
+            max_reduction='logsumexp', node_weight=node_weight).to(device)
         pred_fn = partial(
             lambda log_softmax, theta: torch.exp(log_softmax(theta)),
             hier_torch.MaxCutLogSoftmax(tree, max_reduction='logsumexp').to(device))
