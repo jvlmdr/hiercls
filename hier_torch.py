@@ -221,7 +221,7 @@ def hier_cond_log_softmax(
     flat_shape = [*input_shape[:-1], num_internal * max_num_children]
     # Pad with -inf for log_softmax.
     # flat[..., flat_index] = scores
-    flat = torch.full(flat_shape, -torch.inf, device=device).index_copy_(
+    flat = torch.full(flat_shape, -torch.inf, device=device).index_copy(
         -1, flat_index, scores)
     split_shape = [*input_shape[:-1], num_internal, max_num_children]
     child_scores = flat.reshape(split_shape)
@@ -229,7 +229,7 @@ def hier_cond_log_softmax(
     child_log_p = child_log_p.reshape(flat_shape)
     output_shape = [*input_shape[:-1], num_nodes]
     # log_cond_p[..., child_index] = child_log_p[..., flat_index]
-    log_cond_p = torch.zeros(output_shape, device=device).index_copy_(
+    log_cond_p = torch.zeros(output_shape, device=device).index_copy(
         -1, child_index, child_log_p.index_select(-1, flat_index))
     return log_cond_p
 
@@ -283,7 +283,7 @@ class HierCondLogSoftmax(nn.Module):
         flat_shape = [*input_shape[:-1], self.num_internal * self.max_num_children]
         # Pad with -inf for log_softmax.
         # flat[..., flat_index] = scores
-        flat = torch.full(flat_shape, -torch.inf, device=device).index_copy_(
+        flat = torch.full(flat_shape, -torch.inf, device=device).index_copy(
             -1, self.flat_index, scores)
         split_shape = [*input_shape[:-1], self.num_internal, self.max_num_children]
         child_scores = flat.reshape(split_shape)
@@ -291,7 +291,7 @@ class HierCondLogSoftmax(nn.Module):
         child_log_p = child_log_p.reshape(flat_shape)
         output_shape = [*input_shape[:-1], self.num_nodes]
         # log_cond_p[..., child_index] = child_log_p[..., flat_index]
-        log_cond_p = torch.zeros(output_shape, device=device).index_copy_(
+        log_cond_p = torch.zeros(output_shape, device=device).index_copy(
             -1, self.child_index, child_log_p.index_select(-1, self.flat_index))
         return log_cond_p
 
@@ -788,8 +788,8 @@ def levelwise_log_softmax(tree: hier.Hierarchy, scores: torch.Tensor) -> torch.T
     # Perform in reverse order such that shallow overwrites deep.
     logp = torch.full((*batch_dims, num_nodes), -torch.inf, dtype=scores.dtype, device=scores.device)
     for i in reversed(range(len(level_nodes))):
-        logp.index_copy_(-1, level_nodes[i], level_logp[i])
-    logp.index_fill_(-1, torch.zeros((), dtype=int, device=scores.device), 0.)
+        logp = logp.index_copy(-1, level_nodes[i], level_logp[i])
+    logp = logp.index_fill(-1, torch.zeros((), dtype=int, device=scores.device), 0.)
     return logp
 
 
@@ -820,8 +820,8 @@ class LevelwiseLogSoftmax(nn.Module):
         # Perform in reverse order such that shallow overwrites deep.
         logp = torch.full((*batch_dims, self.num_nodes), -torch.inf, dtype=scores.dtype, device=scores.device)
         for i in reversed(range(num_levels)):
-            logp.index_copy_(-1, self.level_nodes[i], level_logp[i])
-        logp.index_fill_(-1, torch.zeros((), dtype=int, device=scores.device), 0.)
+            logp = logp.index_copy(-1, self.level_nodes[i], level_logp[i])
+        logp = logp.index_fill(-1, torch.zeros((), dtype=int, device=scores.device), 0.)
         return logp
 
 
@@ -842,13 +842,13 @@ def descendant_max(tree: hier.Hierarchy, x: torch.Tensor) -> torch.Tensor:
     level_parents = list(map(torch.from_numpy, level_parents))
     level_children = list(map(torch.from_numpy, level_children))
     num_levels = len(level_parents)
-    out = x.clone()
+    out = x
     # Work up from the maximum depth, taking max of node and its children.
     for i in reversed(range(num_levels)):
         # child_values = _index_select(out, -1, level_children[i])
         child_values = out[..., level_children[i]]
         max_child_value, _ = torch.max(child_values, dim=-1)
-        out.index_copy_(
+        out = out.index_copy(
             -1, level_parents[i],
             torch.maximum(out[..., level_parents[i]], max_child_value))
     return out
@@ -871,13 +871,13 @@ class DescendantMax(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         num_levels = len(self.level_parents)
-        out = x.clone()
+        out = x
         # Work up from the maximum depth, taking max of node and its children.
         for i in reversed(range(num_levels)):
             # child_values = _index_select(out, -1, level_children[i])
             child_values = out[..., self.level_children[i]]
             max_child_value, _ = torch.max(child_values, dim=-1)
-            out.index_copy_(
+            out = out.index_copy(
                 -1, self.level_parents[i],
                 torch.maximum(out[..., self.level_parents[i]], max_child_value))
         return out
@@ -910,7 +910,7 @@ def _split_and_pad(x: torch.Tensor, sizes: List[int], pad_value, dim: int = -1) 
     split_shape = (*input_shape[:-1], len(sizes), max_size)
     return (
         torch.full(flat_shape, pad_value, device=x.device)
-        .index_copy_(-1, flat_index, x)
+        .index_copy(-1, flat_index, x)
         .reshape(split_shape))
 
 
@@ -932,8 +932,12 @@ def _gather_2d(
     return x.reshape(x, flat_shape).gather(-1, i * n + j)
 
 
-def max_cut_logsumexp(tree: hier.Hierarchy, scores: torch.Tensor) -> torch.Tensor:
-    """Finds the max over all descendants of each node."""
+def max_cut_logsumexp(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        max_reduction: str = 'max') -> torch.Tensor:
+    """Finds f(node) = max(theta[node], logsumexp(f(children))."""
+    max_reduce_fn = get_reduce_fn(max_reduction)
     parents, children = hier.level_successors(tree)
     num_levels = len(parents)
     num_parents = [len(parents[d]) for d in range(num_levels)]
@@ -955,24 +959,33 @@ def max_cut_logsumexp(tree: hier.Hierarchy, scores: torch.Tensor) -> torch.Tenso
     concat_children = list(map(fn, concat_children))
 
     batch_dims = tuple(scores.shape[:-1])
-    out = scores.clone()
+    out = scores
     for d in reversed(range(num_levels)):
         flat_inputs = torch.full(
             (*batch_dims, num_parents[d] * max_num_children[d]),
             -torch.inf, device=scores.device)
-        flat_inputs.index_copy_(
+        flat_inputs = flat_inputs.index_copy(
             -1, flat_inputs_index[d], out[..., concat_children[d]])
         inputs = flat_inputs.reshape(*batch_dims, num_parents[d], max_num_children[d])
         logsumexp = torch.logsumexp(inputs, dim=-1)
-        out.index_copy_(
-            -1, parents[d], torch.maximum(out[..., parents[d]], logsumexp))
+        out = out.index_copy(
+            -1, parents[d], max_reduce_fn(out[..., parents[d]], logsumexp))
 
     return out
 
 
+def get_reduce_fn(reduction: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+    if reduction == 'max':
+        return torch.maximum
+    elif reduction == 'logsumexp':
+        return _logsumexp2
+    else:
+        raise ValueError('unknown max reduction', reduction)
+
+
 class MaxCutLogSumExp(nn.Module):
 
-    def __init__(self, tree: hier.Hierarchy):
+    def __init__(self, tree: hier.Hierarchy, max_reduction='max'):
         super().__init__()
         parents, children = hier.level_successors(tree)
         num_levels = len(parents)
@@ -991,6 +1004,7 @@ class MaxCutLogSumExp(nn.Module):
         self.parents = list(map(torch.from_numpy, parents))
         self.flat_inputs_index = list(map(torch.from_numpy, flat_inputs_index))
         self.concat_children = list(map(torch.from_numpy, concat_children))
+        self.max_reduce_fn = get_reduce_fn(max_reduction)
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -1003,31 +1017,34 @@ class MaxCutLogSumExp(nn.Module):
         """Finds the max over all descendants of each node."""
         num_levels = len(self.parents)
         batch_dims = tuple(scores.shape[:-1])
-        out = scores.clone()
+        out = scores
         for d in reversed(range(num_levels)):
             flat_inputs = torch.full(
                 (*batch_dims, self.num_parents[d] * self.max_num_children[d]),
                 -torch.inf, device=scores.device)
-            flat_inputs.index_copy_(
+            flat_inputs = flat_inputs.index_copy(
                 -1, self.flat_inputs_index[d], out[..., self.concat_children[d]])
             inputs = flat_inputs.reshape(*batch_dims, self.num_parents[d], self.max_num_children[d])
             logsumexp = torch.logsumexp(inputs, dim=-1)
-            out.index_copy_(
-                -1, self.parents[d], torch.maximum(out[..., self.parents[d]], logsumexp))
+            out = out.index_copy(
+                -1, self.parents[d], self.max_reduce_fn(out[..., self.parents[d]], logsumexp))
         return out
 
 
-def max_cut_log_softmax(tree: hier.Hierarchy, scores: torch.Tensor) -> torch.Tensor:
+def max_cut_log_softmax(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        max_reduction: str = 'max') -> torch.Tensor:
     """Finds the max over all descendants of each node."""
-    log_z = max_cut_logsumexp(tree, scores)
+    log_z = max_cut_logsumexp(tree, scores, max_reduction=max_reduction)
     return log_z - log_z[..., [0]]
 
 
 class MaxCutLogSoftmax(nn.Module):
 
-    def __init__(self, tree: hier.Hierarchy):
+    def __init__(self, tree: hier.Hierarchy, max_reduction: str = 'max'):
         super().__init__()
-        self.max_cut_logsumexp = MaxCutLogSumExp(tree)
+        self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -1043,7 +1060,8 @@ def max_cut_softmax_loss(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         labels: torch.Tensor,
-        with_leaf_targets: bool) -> torch.Tensor:
+        with_leaf_targets: bool,
+        max_reduction: str = 'max') -> torch.Tensor:
     label_paths = tree.paths_padded()
     label_depths = tree.depths()
     if with_leaf_targets:
@@ -1055,7 +1073,7 @@ def max_cut_softmax_loss(
     label_depths = torch.from_numpy(label_depths).to(scores.device)
 
     # Get energy for each node.
-    log_energy = max_cut_logsumexp(tree, scores)
+    log_energy = max_cut_logsumexp(tree, scores, max_reduction=max_reduction)
     # Get log partition function (root energy).
     log_z = log_energy[..., 0]
     depth = label_depths[labels]
@@ -1066,14 +1084,14 @@ def max_cut_softmax_loss(
         torch.where(ancestors >= 0, scores.gather(-1, ancestors_valid), zero),
         dim=-1)
     num_ancestors = depth + 1
-    loss = torch.sqrt(num_ancestors) * (log_z - sum_ancestor_scores / num_ancestors)
-    # loss = num_ancestors * log_z - sum_ancestor_scores
+    # loss = torch.sqrt(num_ancestors) * (log_z - sum_ancestor_scores / num_ancestors)
+    loss = num_ancestors * log_z - sum_ancestor_scores
     return torch.mean(loss)
 
 
 class MaxCutSoftmaxLoss(nn.Module):
 
-    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool):
+    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool, max_reduction: str = 'max'):
         super().__init__()
         label_paths = tree.paths_padded()
         label_depths = tree.depths()
@@ -1083,7 +1101,7 @@ class MaxCutSoftmaxLoss(nn.Module):
             label_depths = label_depths[label_order]
         self.label_paths = torch.from_numpy(label_paths)
         self.label_depths = torch.from_numpy(label_depths)
-        self.max_cut_logsumexp = MaxCutLogSumExp(tree)
+        self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -1101,13 +1119,19 @@ class MaxCutSoftmaxLoss(nn.Module):
         ancestors = self.label_paths[labels]
         ancestors_valid = torch.where(ancestors >= 0, ancestors, 0)
         zero = torch.zeros((), device=scores.device)
-        sum_ancestor_scores = torch.sum(
-            torch.where(ancestors >= 0, scores.gather(-1, ancestors_valid), zero),
-            dim=-1)
+        ancestor_scores = torch.where(ancestors >= 0, scores.gather(-1, ancestors_valid), zero)
+        sum_ancestor_scores = torch.sum(ancestor_scores, dim=-1)
         num_ancestors = depth + 1
-        loss = torch.sqrt(num_ancestors) * (log_z - sum_ancestor_scores / num_ancestors)
-        # loss = num_ancestors * log_z - sum_ancestor_scores
+        # loss = torch.sqrt(num_ancestors) * (log_z - sum_ancestor_scores / num_ancestors)
+        loss = num_ancestors * log_z - sum_ancestor_scores
+        # loss = log_z - ancestor_scores.index_select(-1, depth)
         return torch.mean(loss)
+
+
+def _logsumexp2(a, b):
+    # return torch.log(torch.exp(a) + torch.exp(b))
+    z = torch.maximum(a, b)
+    return z + torch.log(torch.exp(a - z) + torch.exp(b - z))
 
 
 def ragged_to_sparse_index(row_lens: List[int]) -> Tuple[np.ndarray, np.ndarray]:
