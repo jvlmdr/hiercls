@@ -473,7 +473,7 @@ def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
         num_outputs = tree.num_nodes() - 1
     elif predict == 'levelwise_softmax':
         num_outputs = sum(map(len, hier.level_nodes(tree, extend=True)))
-    elif predict in ('max_cut_softmax', 'descendant_softmax'):
+    elif predict in ('max_cut_softmax', 'descendant_softmax', 'descendant_softmax_complement'):
         num_outputs = tree.num_nodes()
     else:
         raise ValueError('unknown predict method', predict)
@@ -563,6 +563,15 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
     elif config.predict == 'descendant_softmax':
         node_weight = torch.from_numpy(1. / tree.num_leaf_descendants()).float()
         loss_fn = hier_torch.MaxCutSoftmaxLoss(
+            tree, with_leaf_targets=config.train_with_leaf_targets,
+            max_reduction='logsumexp', node_weight=node_weight).to(device)
+        pred_fn = partial(
+            lambda log_softmax, theta: torch.exp(log_softmax(theta)),
+            hier_torch.MaxCutLogSoftmax(tree, max_reduction='logsumexp').to(device))
+
+    elif config.predict == 'descendant_softmax_complement':
+        node_weight = torch.from_numpy(1. / tree.num_leaf_descendants()).float()
+        loss_fn = hier_torch.MaxCutSoftmaxComplementLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
             max_reduction='logsumexp', node_weight=node_weight).to(device)
         pred_fn = partial(

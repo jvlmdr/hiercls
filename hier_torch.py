@@ -1135,6 +1135,109 @@ class MaxCutSoftmaxLoss(nn.Module):
         return torch.mean(loss)
 
 
+def max_cut_softmax_complement_loss(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        with_leaf_targets: bool,
+        max_reduction: str = 'max') -> torch.Tensor:
+    device = scores.device
+
+    node_siblings = hier.siblings_padded(tree, method='constant', constant_value=-1)
+    label_paths = tree.paths_padded()
+    if with_leaf_targets:
+        label_order = tree.leaf_subset()
+        label_paths = label_paths[label_order, :]
+
+    label_paths = torch.from_numpy(label_paths).to(device)
+    node_siblings = torch.from_numpy(node_siblings).to(device)
+
+    # Get ancestors of the label.
+    ancestors = label_paths[labels]
+    ancestor_mask = (ancestors >= 0)
+    ancestors = torch.where(ancestor_mask, ancestors, 0)
+    # Get energy of siblings of each ancestor of the label.
+    # siblings has shape (batch, depth, sibling)
+    siblings = node_siblings[ancestors]
+    sibling_mask = (siblings >= 0)
+    siblings = torch.where(sibling_mask, siblings, 0)
+
+    # Get energy of all nodes.
+    log_energy = max_cut_logsumexp(tree, scores, max_reduction=max_reduction)
+    *batch_dims, m, n = siblings.shape
+    sibling_energy = log_energy.gather(-1, siblings.reshape(*batch_dims, -1)).reshape(*batch_dims, m, n)
+    ancestor_logsumexp = torch.logsumexp(
+        torch.where(sibling_mask, sibling_energy, torch.tensor(-torch.inf, device=device)),
+        dim=-1)
+
+    # Get logsumexp of complement.
+    sum_ancestor_logsumexp = torch.logcumsumexp(ancestor_logsumexp, axis=-1)
+    ancestor_scores = scores.gather(-1, ancestors)
+    log_z = _logsumexp2(ancestor_scores, sum_ancestor_logsumexp)
+    ancestor_loss = log_z - ancestor_scores
+    loss = torch.sum(torch.where(ancestor_mask, ancestor_loss, torch.tensor(0., device=device)), -1)
+    return torch.mean(loss)
+
+
+class MaxCutSoftmaxComplementLoss(nn.Module):
+
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            with_leaf_targets: bool,
+            max_reduction: str = 'max',
+            node_weight: Optional[torch.Tensor] = None):
+        super().__init__()
+        node_siblings = hier.siblings_padded(tree, method='constant', constant_value=-1)
+        label_paths = tree.paths_padded()
+        if with_leaf_targets:
+            label_order = tree.leaf_subset()
+            label_paths = label_paths[label_order, :]
+
+        self.node_siblings = torch.from_numpy(node_siblings)
+        self.label_paths = torch.from_numpy(label_paths)
+        self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
+        self.node_weight = node_weight
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.node_siblings = fn(self.node_siblings)
+        self.label_paths = fn(self.label_paths)
+        self.max_cut_logsumexp = self.max_cut_logsumexp._apply(fn)
+        self.node_weight = _apply_or_none(fn, self.node_weight)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        device = scores.device
+        # Get ancestors of the label.
+        ancestors = self.label_paths[labels]
+        ancestor_mask = (ancestors >= 0)
+        ancestors = torch.where(ancestor_mask, ancestors, 0)
+        # Get energy of siblings of each ancestor of the label.
+        # siblings has shape (batch, depth, sibling)
+        siblings = self.node_siblings[ancestors]
+        sibling_mask = (siblings >= 0)
+        siblings = torch.where(sibling_mask, siblings, 0)
+
+        # Get energy of all nodes.
+        log_energy = self.max_cut_logsumexp(scores)
+        *batch_dims, m, n = siblings.shape
+        sibling_energy = log_energy.gather(-1, siblings.reshape(*batch_dims, -1)).reshape(*batch_dims, m, n)
+        ancestor_logsumexp = torch.logsumexp(
+            torch.where(sibling_mask, sibling_energy, torch.tensor(-torch.inf, device=device)),
+            dim=-1)
+
+        # Get logsumexp of complement.
+        sum_ancestor_logsumexp = torch.logcumsumexp(ancestor_logsumexp, axis=-1)
+        ancestor_scores = scores.gather(-1, ancestors)
+        log_z = _logsumexp2(ancestor_scores, sum_ancestor_logsumexp)
+        ancestor_loss = log_z - ancestor_scores
+        if self.node_weight is not None:
+            ancestor_loss = ancestor_loss * self.node_weight[ancestors]
+        loss = torch.sum(torch.where(ancestor_mask, ancestor_loss, torch.tensor(0., device=device)), -1)
+        return torch.mean(loss)
+
+
 def _logsumexp2(a, b):
     # return torch.log(torch.exp(a) + torch.exp(b))
     z = torch.maximum(a, b)

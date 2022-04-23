@@ -443,6 +443,22 @@ def level_successors_padded(tree: Hierarchy,
     return level_parents, level_children
 
 
+def siblings(tree: Hierarchy) -> List[np.ndarray]:
+    node_parent = tree.parents()
+    node_children = tree.children()
+    node_children[-1] = np.empty([0], dtype=int)
+    return [_except(u, node_children[node_parent[u]]) for u in range(tree.num_nodes())]
+
+
+def siblings_padded(tree: Hierarchy, method: str = 'constant', constant_value: int = -1) -> np.ndarray:
+    ragged = siblings(tree)
+    return _pad_2d(ragged, dtype=int, method=method, constant_value=constant_value)
+
+
+def _except(v, x: np.ndarray) -> np.ndarray:
+    return x[x != v]
+
+
 def _pad_2d(x: List[np.ndarray], dtype: np.dtype, method: str = 'constant', constant_value=None) -> np.ndarray:
     num_rows = len(x)
     row_lens = list(map(len, x))
