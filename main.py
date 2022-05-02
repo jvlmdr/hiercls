@@ -87,6 +87,7 @@ MODEL_FNS = {
     'kuangliu_resnet18': models.kuangliu_cifar.resnet.ResNet18,
     'moit_preact_resnet18': lambda num_outputs: (
         models.moit.preact_resnet.PreActResNet18(num_outputs, mode='')),
+    'linear': nn.LazyLinear,
 }
 
 
@@ -105,6 +106,7 @@ DATASET_FNS = {
     'tiny_imagenet': datasets.TinyImageNet,
     'inaturalist2018': datasets.INaturalist2018,
     'inaturalist2021': datasets.INaturalist2021,
+    'npz': datasets.NpzDataset,
 }
 
 # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -113,6 +115,8 @@ normalize = transforms.Normalize(0.5, 1.0)
 
 # Non-deterministic transforms have 'rand_' prefix.
 TRANSFORMS = {
+    'none': None,
+
     # CIFAR train
     'rand_pad4_crop32_hflip': transforms.Compose([
         transforms.Pad(4),
@@ -121,7 +125,7 @@ TRANSFORMS = {
         transforms.ToTensor(),
     ]),
     # CIFAR eval
-    'none': transforms.Compose([
+    'to_tensor': transforms.Compose([
         transforms.ToTensor(),
     ]),
 
