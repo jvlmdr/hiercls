@@ -87,6 +87,88 @@ class FlatLogSoftmaxNLL(nn.Module):
         return torch.mean(nll)
 
 
+def flat_bertinetto_hxe(
+        tree: hier.Hierarchy,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        alpha: float = 0.0,
+        dim: int = -1) -> torch.Tensor:
+    """The target is an index of a node in the tree."""
+    device = scores.device
+    # Take log-sum-exp of leaf descendants.
+    parent = torch.from_numpy(tree.parents(root_loop=True)).to(device)
+    parent_depth = torch.from_numpy(tree.depths() - 1).to(device)
+    weight = torch.exp(-alpha * parent_depth)
+    leaf_subset = torch.from_numpy(tree.leaf_subset()).to(device)
+    scores_full = (
+        torch.full((*scores.shape[:-1], tree.num_nodes()), -torch.inf, dtype=torch.float32)
+        .index_copy(-1, leaf_subset, scores))
+    logsumexp = descendant_logsumexp(tree, scores_full)
+    log_cond_p = logsumexp - logsumexp[..., parent]
+    # Take weighted sum over ancestors.
+    # Weight each conditional likelihood by exp(-alpha * parent_depth).
+    # Note that log_cond_p of root is always zero.
+    assert dim in (-1, scores.ndim - 1)
+    weighted_cond_nll = weight * -log_cond_p
+    weighted_nll = sum_ancestors(tree, weighted_cond_nll, dim=dim, strict=False)
+    assert labels.ndim == scores.ndim - 1
+    label_nll = torch.gather(weighted_nll, dim, labels.unsqueeze(-1)).squeeze(-1)
+    return torch.mean(label_nll)
+
+
+class FlatBertinettoHXE(nn.Module):
+
+    def __init__(self, tree, alpha: float, with_leaf_targets: bool):
+        super().__init__()
+        parent = torch.from_numpy(tree.parents(root_loop=True))
+        parent_depth = torch.from_numpy(tree.depths() - 1)
+        leaf_subset = torch.from_numpy(tree.leaf_subset())
+        if with_leaf_targets:
+            label_order = torch.from_numpy(tree.leaf_subset())
+        else:
+            label_order = None
+
+        self.alpha = alpha
+        self.num_nodes = tree.num_nodes()
+
+        self.leaf_subset = leaf_subset
+        self.parent = parent
+        self.parent_depth = parent_depth
+        self.label_order = label_order
+        self.descendant_logsumexp_fn = DescendantLogSumExp(tree)
+        self.sum_ancestors_fn = SumAncestors(tree, strict=False)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.parent = fn(self.parent)
+        self.parent_depth = fn(self.parent_depth)
+        self.leaf_subset = fn(self.leaf_subset)
+        self.label_order = _apply_or_none(fn, self.label_order)
+        self.descendant_logsumexp_fn._apply(fn)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        assert labels.ndim == scores.ndim - 1
+        weight = torch.exp(-self.alpha * self.parent_depth)
+        # Take log-sum-exp of leaf descendants.
+        scores_full = (
+            torch.full(
+                (*scores.shape[:-1], self.num_nodes), -torch.inf,
+                dtype=torch.float32, device=scores.device)
+            .index_copy(-1, self.leaf_subset, scores))
+        logsumexp = self.descendant_logsumexp_fn(scores_full)
+        log_cond_p = logsumexp - logsumexp[..., self.parent]
+        # Take weighted sum over ancestors.
+        # Weight each conditional likelihood by exp(-alpha * parent_depth).
+        # Note that log_cond_p of root is always zero.
+        weighted_cond_nll = weight * -log_cond_p
+        weighted_nll = self.sum_ancestors_fn(weighted_cond_nll)
+        if self.label_order is not None:
+            weighted_nll = weighted_nll[..., self.label_order]
+        label_nll = torch.gather(weighted_nll, -1, labels.unsqueeze(-1)).squeeze(-1)
+        return torch.mean(label_nll)
+
+
 def hier_softmax_nll(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
@@ -184,7 +266,7 @@ class HierSoftmaxCrossEntropy(nn.Module):
         log_cond_p = self.hier_cond_log_softmax(scores, dim=-1)
         xent = q * -log_cond_p
         if self.node_weight is not None:
-            xent *= self.node_weight
+            xent = xent * self.node_weight
         xent = torch.sum(xent, dim=-1)
         return torch.mean(xent)
 
@@ -883,6 +965,61 @@ class DescendantMax(nn.Module):
         return out
 
 
+def descendant_logsumexp(tree: hier.Hierarchy, x: torch.Tensor) -> torch.Tensor:
+    """Finds the max over all descendants of each node."""
+    level_parents, level_children = hier.level_successors_padded(tree, 'constant', -1)
+    level_parents = list(map(torch.from_numpy, level_parents))
+    level_children = list(map(torch.from_numpy, level_children))
+    num_levels = len(level_parents)
+    out = x
+    neg_inf = torch.tensor(-torch.inf, dtype=torch.float32)
+    # Work up from the maximum depth, taking max of node and its children.
+    for i in reversed(range(num_levels)):
+        # child_values = _index_select(out, -1, level_children[i])
+        valid = level_children[i] >= 0
+        child_values = out[..., torch.where(valid, level_children[i], 0)]
+        max_child_value = torch.logsumexp(torch.where(valid, child_values, neg_inf), dim=-1)
+        # TODO: Add option for leaf nodes only.
+        out = out.index_copy(
+            -1, level_parents[i],
+            _logsumexp2(out[..., level_parents[i]], max_child_value))
+    return out
+
+
+class DescendantLogSumExp(nn.Module):
+    """Finds the logsumexp over all descendants of each node."""
+
+    # TODO: This is the same as MaxCutLogSumExp with max_reduction='logsumexp'.
+
+    def __init__(self, tree: hier.Hierarchy):
+        super().__init__()
+        level_parents, level_children = hier.level_successors_padded(tree, 'constant', -1)
+        self.level_parents = list(map(torch.from_numpy, level_parents))
+        self.level_children = list(map(torch.from_numpy, level_children))
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.level_parents = list(map(fn, self.level_parents))
+        self.level_children = list(map(fn, self.level_children))
+        return self
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        num_levels = len(self.level_parents)
+        neg_inf = torch.tensor(-torch.inf, dtype=torch.float32, device=x.device)
+        out = x
+        # Work up from the maximum depth, taking max of node and its children.
+        for i in reversed(range(num_levels)):
+            valid = self.level_children[i] >= 0
+            # child_values = out[..., self.level_children[i]]
+            # max_child_value = torch.logsumexp(child_values, dim=-1)
+            child_values = out[..., torch.where(valid, self.level_children[i], 0)]
+            max_child_value = torch.logsumexp(torch.where(valid, child_values, neg_inf), dim=-1)
+            out = out.index_copy(
+                -1, self.level_parents[i],
+                _logsumexp2(out[..., self.level_parents[i]], max_child_value))
+        return out
+
+
 def _index_select(x: torch.Tensor, dim: int, index: torch.Tensor) -> torch.Tensor:
     """Like Tensor.index_select, but supports multi-dimensional index.
 
@@ -1096,7 +1233,8 @@ class MaxCutSoftmaxLoss(nn.Module):
             tree: hier.Hierarchy,
             with_leaf_targets: bool,
             max_reduction: str = 'max',
-            node_weight: Optional[torch.Tensor] = None):
+            node_weight: Optional[torch.Tensor] = None,
+            focal_power: float = 0.0):
         super().__init__()
         label_paths = tree.paths_padded()
         label_depths = tree.depths()
@@ -1108,6 +1246,7 @@ class MaxCutSoftmaxLoss(nn.Module):
         self.label_depths = torch.from_numpy(label_depths)
         self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
         self.node_weight = node_weight
+        self.focal_power = focal_power
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -1128,6 +1267,8 @@ class MaxCutSoftmaxLoss(nn.Module):
         ancestors = torch.where(mask, ancestors, 0)
         ancestor_scores = scores.gather(-1, ancestors)
         loss = log_z.unsqueeze(-1) - ancestor_scores
+        if self.focal_power:
+            loss = loss * (1 - torch.exp(-loss)) ** self.focal_power
         if self.node_weight is not None:
             loss = loss * self.node_weight[ancestors]
         loss = torch.where(mask, loss, torch.tensor(0., device=scores.device))

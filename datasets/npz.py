@@ -10,10 +10,14 @@ class NpzDataset(torch.utils.data.Dataset[Tuple[torch.Tensor, torch.Tensor]]):
     """Loads tensors from an npz file."""
 
     def __init__(self, root: str, split: str, transform: Optional[Callable] = None):
-        fname = os.path.join(root, split + '.npz')
-        data = np.load(fname)
-        features = torch.from_numpy(data['features']).type(torch.get_default_dtype())
-        labels = torch.from_numpy(data['labels'])
+        data = np.load(os.path.join(root, split + '.npz'))
+        mean = np.load(os.path.join(root, 'mean.npy')).astype(np.float32)
+        features = data['features'].astype(np.float32)
+        labels = data['labels']
+        features -= np.expand_dims(mean, 0)
+
+        features = torch.from_numpy(features)
+        labels = torch.from_numpy(labels)
         self.targets = labels  # For sampling, etc.
         self.tensor_dataset = torch.utils.data.TensorDataset(features, labels)
         self.transform = transform

@@ -74,20 +74,25 @@ def reset_resnet_fc_(num_outputs: int, model: torchvision.models.ResNet) -> torc
 
 
 MODEL_FNS = {
-    'torch_resnet18': lambda num_outputs: (
-        torchvision.models.resnet18(pretrained=False, num_classes=num_outputs)),
-    'torch_resnet18_pretrain': lambda num_outputs: reset_resnet_fc_(
-        num_outputs,
-        torchvision.models.resnet18(pretrained=True, num_classes=1000)),
-    'torch_resnet50': lambda num_outputs: (
-        torchvision.models.resnet50(pretrained=False, num_classes=num_outputs)),
-    'torch_resnet50_pretrain': lambda num_outputs: reset_resnet_fc_(
-        num_outputs,
-        torchvision.models.resnet50(pretrained=True, num_classes=1000)),
-    'kuangliu_resnet18': models.kuangliu_cifar.resnet.ResNet18,
-    'moit_preact_resnet18': lambda num_outputs: (
-        models.moit.preact_resnet.PreActResNet18(num_outputs, mode='')),
-    'linear': nn.LazyLinear,
+    'torch_resnet18': lambda num_outputs:
+        torchvision.models.resnet18(pretrained=False, num_classes=num_outputs),
+    'torch_resnet18_pretrain': lambda num_outputs:
+        reset_resnet_fc_(
+            num_outputs,
+            torchvision.models.resnet18(pretrained=True, num_classes=1000)),
+    'torch_resnet50': lambda num_outputs:
+        torchvision.models.resnet50(pretrained=False, num_classes=num_outputs),
+    'torch_resnet50_pretrain': lambda num_outputs:
+        reset_resnet_fc_(
+            num_outputs,
+            torchvision.models.resnet50(pretrained=True, num_classes=1000)),
+    'kuangliu_resnet18': lambda num_outputs:
+        models.kuangliu_cifar.resnet.ResNet18(num_outputs),
+    'moit_preact_resnet18': lambda num_outputs:
+        models.moit.preact_resnet.PreActResNet18(num_outputs, mode=''),
+    'linear': lambda num_outputs: nn.LazyLinear(num_outputs, bias=True),
+    # 'linear': lambda input_shape, num_outputs:
+    #     nn.Linear(_sole(input_shape), num_outputs, bias=True),
 }
 
 
@@ -469,7 +474,7 @@ def load_labels(labels_tag, node_names):
 
 
 def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
-    if predict == 'flat_softmax':
+    if predict in ('flat_softmax', 'flat_bertinetto'):
         num_outputs = tree.num_leaf_nodes()
     elif predict in ('hier_softmax', 'bertinetto_hxe'):
         num_outputs = tree.num_nodes() - 1
@@ -501,17 +506,14 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         # loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)
         # loss_fn = hier_torch.HierSoftmaxNLL(tree, with_leaf_targets=True).to(device)
         if config.train.hier_normalize == '':
-            assert not config.train.hier_normalize
             node_weight = None
-        # elif config.train.hier_normalize == 'self':
-        #     node_weight = torch.from_numpy(
-        #         (1 / hier.uniform_leaf(tree)) * (1 / tree.num_nodes()))
         elif config.train.hier_normalize == 'parent':
-            parent_mass = hier.uniform_leaf(tree)[tree.parents(root_loop=True)]
-            node_weight = torch.from_numpy((1 / parent_mass) * (1 / tree.num_conditionals()))
-        elif config.train.hier_normalize == 'sqrt_parent':
-            parent_mass = hier.uniform_leaf(tree)[tree.parents(root_loop=True)]
-            node_weight = torch.from_numpy(np.sqrt((1 / parent_mass) * (1 / tree.num_conditionals())))
+            # parent_mass = hier.uniform_leaf(tree)[tree.parents(root_loop=True)]
+            # node_weight = torch.from_numpy((1 / parent_mass) * (1 / tree.num_conditionals()))
+            parent_freq = tree.num_leaf_descendants()[tree.parents(root_loop=True)].astype(np.float32)
+            # Normalize instead by number of conditionals to control loss magnitude.
+            # (There may be many conditional distributions in a tree.)
+            node_weight = torch.from_numpy(tree.num_leaf_nodes() / (tree.num_conditionals() * parent_freq))
         else:
             raise ValueError('unknown hier_normalize', config.train.hier_normalize)
         loss_fn = hier_torch.HierSoftmaxCrossEntropy(
@@ -527,11 +529,21 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         if config.train.label_smoothing:
             raise NotImplementedError
         loss_fn = hier_torch.BertinettoHXE(
-            tree, config.train.hxe_alpha,
+            tree, alpha=config.train.hxe_alpha,
             with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
             lambda log_softmax_fn, theta: torch.exp(log_softmax_fn(theta)),
             hier_torch.HierLogSoftmax(tree).to(device))
+
+    elif config.predict == 'flat_bertinetto':
+        if config.train.label_smoothing:
+            raise NotImplementedError
+        loss_fn = hier_torch.FlatBertinettoHXE(
+            tree, alpha=config.train.hxe_alpha,
+            with_leaf_targets=config.train_with_leaf_targets).to(device)
+        pred_fn = partial(
+            lambda sum_fn, theta: sum_fn(F.softmax(theta, dim=-1), dim=-1),
+            hier_torch.SumLeafDescendants(tree, strict=False).to(device))
 
     elif config.predict == 'multilabel':
         if config.train.label_smoothing:
@@ -568,7 +580,8 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         node_weight = torch.from_numpy(1. / tree.num_leaf_descendants()).float()
         loss_fn = hier_torch.MaxCutSoftmaxLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
-            max_reduction='logsumexp', node_weight=node_weight).to(device)
+            max_reduction='logsumexp', node_weight=node_weight,
+            focal_power=config.train.hier_focal_power).to(device)
         pred_fn = partial(
             lambda log_softmax, theta: torch.exp(log_softmax(theta)),
             hier_torch.MaxCutLogSoftmax(tree, max_reduction='logsumexp').to(device))
@@ -616,12 +629,21 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         num_workers=FLAGS.loader_num_workers,
         prefetch_factor=LOADER_PREFETCH_FACTOR)
 
+    input_shape = tuple(train_dataset[0][0].shape)
     num_outputs = get_num_outputs(config.predict, tree)
     net = make_model(config.model, num_outputs)
     net.to(device)
 
     # TODO: Re-factor to enable `loss_fn.to(device)`?
     loss_fn, pred_fn = make_loss(config, tree, device)
+
+    # Dry run to initialize lazy parameters before defining optimizer.
+    # (See `torch.nn.modules.lazy.LazyModuleMixin`.)
+    def dry_run():
+        net.eval()  # Do not modify batch-norm stats.
+        inputs, _ = next(iter(train_loader))
+        net(inputs.to(device))
+    dry_run()
 
     optimizer = optim.SGD(
         net.parameters(),
@@ -882,6 +904,11 @@ def sorted_above_threshold(p: np.ndarray, threshold: float = 0.5) -> np.ndarray:
     subset, = np.nonzero(p > threshold)
     order = np.argsort(-p[subset])
     return subset[order]
+
+
+def _sole(xs):
+    x, = xs
+    return x
 
 
 if __name__ == '__main__':

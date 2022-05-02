@@ -120,3 +120,20 @@ def argmax_with_confidence(
     if condition is not None:
         mask = mask & condition
     return arglexmin_where(np.broadcast_arrays(-p, -value), mask)
+
+
+def plurality_threshold(tree: hier.Hierarchy, p: np.ndarray) -> np.ndarray:
+    """
+    """
+    children = tree.children()
+    # Find the top 2 elements of each non-trivial family.
+    top2_inds = {
+        u: inds[np.argsort(p[..., inds], axis=-1)[..., -2:]]
+        for u, inds in children.items() if len(inds) > 1
+    }
+    top2_values = np.stack([
+        np.take_along_axis(p, ind, axis=-1)
+        for ind in top2_inds.values()
+    ], axis=-1)
+    # Take the maximum 2nd-best over all non-trivial families.
+    return np.max(top2_values, axis=-1)[..., -2]
