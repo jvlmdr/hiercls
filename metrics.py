@@ -175,27 +175,77 @@ def operating_curve(
     are arrays of the same length, ordered descending by score.
     This can be obtained using `infer.prediction_sequence()`.
     """
+    # Assert that scores are sorted (descending) per example.
+    for seq in example_scores:
+        if not np.all(np.diff(seq) <= 0):
+            raise ValueError('scores must be strictly descending', seq)
+
+    # # Check that all scores have identical start.
+    # init_scores = np.array([seq[0] for seq in example_scores])
+    # unique_init_scores = np.unique(init_scores)
+    # if not len(unique_init_scores) == 1:
+    #     raise ValueError('initial scores are not equal', unique_init_scores)
+    # init_score, = unique_init_scores
+
     # Obtain order of scores.
     # Note: Could do a merge sort here, since each array is already sorted.
     step_scores = np.concatenate([seq[1:] for seq in example_scores])
     step_order = np.argsort(-step_scores)
     step_scores = step_scores[step_order]
-    step_totals = {}
+    # Identify first element in each group of scores.
+    n = len(step_scores)
+    _, first_index = np.unique(-step_scores, return_index=True)
+    group_scores = step_scores[first_index]
+    # group_scores = np.concatenate(([init_score], step_scores[first_index]))
+    last_index = np.concatenate((first_index[1:], [n])) - 1
+    group_totals = {}
     for field, example_values in example_metrics.items():
         # Convert to float since np.diff() treats bools as mod 2 arithmetic.
         example_values = [seq.astype(float) for seq in example_values]
         total_init = np.sum([seq[0] for seq in example_values])
         total_deltas = np.concatenate([np.diff(seq) for seq in example_values])[step_order]
-        step_totals[field] = total_init + _cumsum_with_zero(total_deltas)
-    return step_scores, step_totals
+        group_totals[field] = np.concatenate(([total_init], total_init + np.cumsum(total_deltas)[last_index]))
+    return group_scores, group_totals
 
 
-def _cumsum_with_zero(x: np.ndarray, axis: int = 0) -> np.ndarray:
-    ndim = x.ndim
-    pad_width = [(0, 0)] * ndim
-    pad_width[axis] = (1, 0)
-    return np.cumsum(np.pad(x, pad_width, 'constant'), axis=axis)
+# def _cumsum_with_zero(x: np.ndarray, axis: int = 0) -> np.ndarray:
+#     ndim = x.ndim
+#     pad_width = [(0, 0)] * ndim
+#     pad_width[axis] = (1, 0)
+#     return np.cumsum(np.pad(x, pad_width, 'constant'), axis=axis)
 
 
-# def auc():
-#     raise NotImplementedError
+def pareto_integrate(a: np.ndarray, b: np.ndarray) -> float:
+    assert np.all((0 <= a) & (a <= 1))
+    assert np.all((0 <= b) & (b <= 1))
+    assert np.ndim(a) == 1
+    assert np.ndim(b) == 1
+    assert len(a) == len(b)
+
+    order = np.argsort(a)
+    a = a[order]
+    b = b[order]
+    b = np.flip(np.maximum.accumulate(np.flip(b)))
+
+    da = a - np.concatenate(([0.0], a[:-1]))
+    return np.sum(da * b)
+
+
+def pareto_intercept(a: np.ndarray, b: np.ndarray, query: np.ndarray) -> float:
+    """Evaluates the pareto function at the query."""
+    assert np.all((0 <= a) & (a <= 1))
+    assert np.all((0 <= b) & (b <= 1))
+    assert np.ndim(a) == 1
+    assert np.ndim(b) == 1
+    assert len(a) == len(b)
+
+    order = np.argsort(a)
+    a = a[order]
+    b = b[order]
+    b = np.flip(np.maximum.accumulate(np.flip(b)))
+    # a = np.concatenate((a, [np.inf]))
+    b = np.concatenate((b, [0.]))
+
+    # Find i such that a[i-1] < query <= a[i].
+    index = np.searchsorted(a, query, side='left')
+    return b[index]

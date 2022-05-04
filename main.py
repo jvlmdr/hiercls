@@ -581,7 +581,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         loss_fn = hier_torch.MaxCutSoftmaxLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
             max_reduction='logsumexp', node_weight=node_weight,
-            focal_power=config.train.hier_focal_power).to(device)
+            focal_power=getattr(config.train, 'hier_focal_power', None)).to(device)
         pred_fn = partial(
             lambda log_softmax, theta: torch.exp(log_softmax(theta)),
             hier_torch.MaxCutLogSoftmax(tree, max_reduction='logsumexp').to(device))

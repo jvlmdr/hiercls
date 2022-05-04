@@ -1234,7 +1234,7 @@ class MaxCutSoftmaxLoss(nn.Module):
             with_leaf_targets: bool,
             max_reduction: str = 'max',
             node_weight: Optional[torch.Tensor] = None,
-            focal_power: float = 0.0):
+            focal_power: Optional[float] = None):
         super().__init__()
         label_paths = tree.paths_padded()
         label_depths = tree.depths()

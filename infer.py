@@ -23,10 +23,11 @@ def max_info_majority_subtree(tree: hier.Hierarchy, p: np.ndarray) -> np.ndarray
 
 
 def pareto_optimal_predictions(
-        specificity: np.ndarray,
-        p: np.ndarray,
+        info: np.ndarray,
+        prob: np.ndarray,
         min_threshold: Optional[float] = None,
         condition: Optional[np.ndarray] = None,
+        require_unique: bool = False,
         ) -> np.ndarray:
     """Finds the sequence of nodes that can be chosen by threshold.
 
@@ -35,36 +36,37 @@ def pareto_optimal_predictions(
     (1) nodes such that there does not exist a node which is more confident and more specific,
     (2) nodes such that all nodes are less confident or less specific (*less than or equal).
 
-    The resulting nodes are ordered descending by p (and ascending by specificity).
+    The resulting nodes are ordered descending by prob (and ascending by info).
     """
-    assert p.ndim == 1
-    assert specificity.ndim == 1
+    assert prob.ndim == 1
+    assert info.ndim == 1
 
-    is_valid = np.ones(p.shape, dtype=bool)
+    is_valid = np.ones(prob.shape, dtype=bool)
     if min_threshold is not None:
-        is_valid = is_valid & (p > min_threshold)
+        is_valid = is_valid & (prob > min_threshold)
     if condition is not None:
         is_valid = is_valid & condition
     assert np.any(is_valid), 'require at least one valid element'
+    prob = prob[is_valid]
+    info = info[is_valid]
+    valid_inds, = np.nonzero(is_valid)
 
-    # Order by confidence (desc) then by specificity (desc).
+    # Order descending by prob then descending by info.
     # Note that np.lexsort() orders first by the last key.
     # (Performs stable sort from first key to last key.)
-    order = np.lexsort((-specificity[is_valid], -p[is_valid]))
-    valid_inds, = np.nonzero(is_valid)
-    order = valid_inds[order]
+    order = np.lexsort((-info, -prob))
+    prob = prob[order]
+    info = info[order]
 
-    # Guaranteed that: i < j implies p[i] >= p[j]
-    # Want also: i < j implies specificity[i] <= specificity[j]
-    # That is, we have decreasing scores but increasing specificity.
-    ordered_specificity = specificity[order]
-    max_specificity = np.maximum.accumulate(ordered_specificity)
-    # keep = (ordered_specificity >= max_specificity)
-    # Keep only the first element which satisfies the non-strict inequality.
-    # Replace: (ordered_specificity[i] >= max_specificity[i])
-    # with:    (ordered_specificity[i] >  max_specificity[i - 1] or i == 0)
-    keep = np.concatenate([[True], ordered_specificity[1:] > max_specificity[:-1]])
-    return order[keep]
+    max_info = np.maximum.accumulate(info)
+    keep = (prob[1:] > prob[:-1]) | (info[1:] > max_info[:-1])
+    keep = np.concatenate(([True], keep))
+
+    if require_unique:
+        if np.any((prob[1:] == prob[:-1]) & (info[1:] == info[:-1]) & (keep[1:] | keep[:-1])):
+            raise ValueError('set is not unique')
+
+    return valid_inds[order[keep]]
 
 
 def argmax_where(
@@ -123,8 +125,6 @@ def argmax_with_confidence(
 
 
 def plurality_threshold(tree: hier.Hierarchy, p: np.ndarray) -> np.ndarray:
-    """
-    """
     children = tree.children()
     # Find the top 2 elements of each non-trivial family.
     top2_inds = {
