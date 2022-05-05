@@ -114,9 +114,9 @@ DATASET_FNS = {
     'npz': datasets.NpzDataset,
 }
 
-# normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-#                                  std=[0.229, 0.224, 0.225])
-normalize = transforms.Normalize(0.5, 1.0)
+# imagenet_normalize = transforms.Normalize(
+#     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+imagenet_normalize = transforms.Normalize(0.5, 1.0)
 
 # Non-deterministic transforms have 'rand_' prefix.
 TRANSFORMS = {
@@ -139,14 +139,14 @@ TRANSFORMS = {
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        normalize,
+        imagenet_normalize,
     ]),
     # ImageNet eval
     'resize256_crop224': transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
-        normalize,
+        imagenet_normalize,
     ]),
 
     # Tiny ImageNet train (64px)
@@ -476,6 +476,8 @@ def load_labels(labels_tag, node_names):
 def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
     if predict in ('flat_softmax', 'flat_bertinetto'):
         num_outputs = tree.num_leaf_nodes()
+    elif predict == 'soft_margin':
+        num_outputs = tree.num_nodes()
     elif predict in ('hier_softmax', 'bertinetto_hxe'):
         num_outputs = tree.num_nodes() - 1
     elif predict in ('multilabel', 'multilabel_focal'):
@@ -501,6 +503,15 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         pred_fn = partial(
             lambda sum_fn, theta: sum_fn(F.softmax(theta, dim=-1), dim=-1),
             hier_torch.SumLeafDescendants(tree, strict=False).to(device))
+
+    elif config.predict == 'soft_margin':
+        loss_fn = hier_torch.SoftMarginLoss(
+            tree, with_leaf_targets=config.train_with_leaf_targets,
+            margin=getattr(config.train, 'margin', 'depth_dist'),
+            tau=getattr(config.train, 'margin_tau', 1.0)).to(device)
+        pred_fn = partial(
+            lambda sum_fn, theta: sum_fn(F.softmax(theta, dim=-1), dim=-1),
+            hier_torch.SumDescendants(tree, strict=False).to(device))
 
     elif config.predict == 'hier_softmax':
         # loss_fn = partial(hier_torch.hier_softmax_nll_with_leaf, tree)

@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Callable, List, Optional, Tuple
 
+from absl import logging
 import numpy as np
 import torch
 from torch import nn
@@ -8,6 +9,7 @@ import torch.nn.functional as F
 import torchvision
 
 import hier
+import metrics
 
 
 def flat_log_softmax(
@@ -810,7 +812,6 @@ class LevelwiseSoftmaxNLL(nn.Module):
 
     def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False):
         super().__init__()
-        node_depth = tree.depths()
         level_nodes = hier.level_nodes(tree, extend=True)
         level_sizes = tuple(map(len, level_nodes))
         num_levels = len(level_nodes)
@@ -1391,6 +1392,57 @@ def ragged_to_sparse_index(row_lens: List[int]) -> Tuple[np.ndarray, np.ndarray]
     concat_row = np.concatenate(row)
     concat_col = np.concatenate(col)
     return concat_row, concat_col
+
+
+class SoftMarginLoss(nn.Module):
+
+    def __init__(
+            self, tree: hier.Hierarchy,
+            with_leaf_targets: bool,
+            margin: str = 'depth_dist',
+            tau: float = 1.0):
+        super().__init__()
+        n = tree.num_nodes()
+        label_order = tree.leaf_subset() if with_leaf_targets else np.arange(n)
+
+        # Construct array label_margin[gt_label, pr_node].
+        if margin in ('edge_dist', 'depth_dist'):
+            # label_margin = metrics.edge_dist(tree, label_order[:, None], np.arange(n)[None, :])
+            depth = tree.depths()
+            label_margin = metrics.LCAMetric(tree, depth).dist(label_order[:, None], np.arange(n))
+        elif margin == 'incorrect':
+            is_ancestor = tree.ancestor_mask()
+            is_correct = is_ancestor[:, label_order].T
+            label_margin = 1 - is_correct
+        elif margin == 'info_dist':
+            # TODO: Does natural log make most sense here?
+            info = np.log(tree.num_leaf_nodes() / tree.num_leaf_descendants())
+            label_margin = metrics.LCAMetric(tree, info).dist(label_order[:, None], np.arange(n))
+        elif margin == 'depth_deficient':
+            depth = tree.depths()
+            label_margin = metrics.LCAMetric(tree, depth).deficient(label_order[:, None], np.arange(n))
+        else:
+            raise ValueError('unknown margin', margin)
+
+        correct_margins = label_margin[np.arange(len(label_order)), label_order]
+        if not np.all(correct_margins == 0):
+            raise ValueError('margin with self is not zero', correct_margins)
+
+        self.tau = tau
+        self.label_order = torch.from_numpy(label_order)
+        self.label_margin = torch.from_numpy(label_margin)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.label_order = fn(self.label_order)
+        self.label_margin = fn(self.label_margin)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        label_node = labels if self.label_order is None else self.label_order[labels]
+        label_score = scores.gather(-1, label_node.unsqueeze(-1)).squeeze(-1)
+        loss = -label_score + torch.logsumexp(scores + self.tau * self.label_margin[labels, :], axis=-1)
+        return torch.mean(loss)
 
 
 def _apply_or_none(fn: Callable, x: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
