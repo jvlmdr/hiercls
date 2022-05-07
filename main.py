@@ -61,6 +61,7 @@ flags.DEFINE_integer(
     'loader_num_workers', 8, 'Number of data loaders (affects memory footprint).')
 flags.DEFINE_bool(
     'loader_pin_memory', False, 'Use page-locked memory in training data loader.')
+flags.DEFINE_string('device', 'cuda', 'Pytorch device.')
 
 flags.DEFINE_bool('resume', False, 'Resume from previous checkpoint.')
 flags.DEFINE_bool('skip_initial_eval', True, 'Skip eval for epoch 0.')
@@ -622,7 +623,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
 
 
 def train(config, experiment_dir: Optional[pathlib.Path]):
-    device = torch.device('cuda')
+    device = torch.device(FLAGS.device)
 
     train_dataset, eval_dataset, tree, _, train_label_map, eval_label_map = make_datasets(config)
 
