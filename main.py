@@ -37,7 +37,7 @@ SOURCE_DIR = pathlib.Path(__file__).parent
 LOADER_PREFETCH_FACTOR = 2
 TENSORBOARD_FLUSH_SECS = 10
 
-PREDICT_METHODS = ['leaf', 'majority']
+PREDICT_METHODS = ['leaf', 'majority', 'exclusive']
 
 config_flags.DEFINE_config_file('config')
 
@@ -476,7 +476,7 @@ def load_labels(labels_tag, node_names):
 def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
     if predict in ('flat_softmax', 'flat_bertinetto'):
         num_outputs = tree.num_leaf_nodes()
-    elif predict == 'soft_margin':
+    elif predict in ('soft_margin', 'hard_margin'):
         num_outputs = tree.num_nodes()
     elif predict in ('hier_softmax', 'bertinetto_hxe'):
         num_outputs = tree.num_nodes() - 1
@@ -504,9 +504,10 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             lambda sum_fn, theta: sum_fn(F.softmax(theta, dim=-1), dim=-1),
             hier_torch.SumLeafDescendants(tree, strict=False).to(device))
 
-    elif config.predict == 'soft_margin':
+    elif config.predict in ('soft_margin', 'hard_margin'):
         loss_fn = hier_torch.SoftMarginLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
+            hardness={'soft_margin': 'soft', 'hard_margin': 'hard'}[config.predict],
             margin=getattr(config.train, 'margin', 'depth_dist'),
             tau=getattr(config.train, 'margin_tau', 1.0)).to(device)
         pred_fn = partial(
@@ -704,6 +705,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
     is_leaf = tree.leaf_mask()
     specificity = -tree.num_leaf_descendants()
     not_trivial = (tree.num_children() != 1)
+    subtract_children = hier_torch.SubtractChildren(tree)  # Leave on CPU.
 
     # Loop for one extra epoch to save and evaluate model.
     for epoch in range(config.train.num_epochs + 1):
@@ -759,6 +761,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     pred = {}
                     pred['leaf'] = infer.argmax_where(prob, is_leaf)
                     max_leaf_prob = infer.max_where(prob, is_leaf)
+                    pred['exclusive'] = np.argmax(subtract_children(torch.from_numpy(prob)).numpy(), axis=-1)
                     pred['majority'] = infer.argmax_with_confidence(
                         specificity, prob, 0.5, not_trivial)
                     # Truncate predictions where more specific than ground-truth.
@@ -804,16 +807,12 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             metric_means = {method: {field: metric_totals[method][field] / example_count
                                      for field in metric_totals[method]} for method in pred}
             for method in pred:
+                logging.info(
+                    '%s: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g', method,
+                    metric_means[method]['exact'], metric_means[method]['correct'],
+                    metric_means[method]['depth_dist'], metric_means[method]['info_dist'])
                 for field in metric_fns:
                     writer.add_scalar(f'{field}/{method}/eval', metric_means[method][field], epoch)
-            logging.info(
-                'leaf: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g',
-                metric_means['leaf']['exact'], metric_means['leaf']['correct'],
-                metric_means['leaf']['depth_dist'], metric_means['leaf']['info_dist'])
-            logging.info(
-                'majority: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g',
-                metric_means['majority']['exact'], metric_means['majority']['correct'],
-                metric_means['majority']['depth_dist'], metric_means['majority']['info_dist'])
 
             # Concatenate minibatches into large array.
             leaf_predicate = lambda x: not isinstance(x, dict)  # Treat lists as values, not containers.
@@ -876,6 +875,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             prob = prob.cpu().numpy()
             pred = {}
             pred['leaf'] = infer.argmax_where(prob, is_leaf)
+            pred['exclusive'] = np.argmax(subtract_children(torch.from_numpy(prob)).numpy(), axis=-1)
             pred['majority'] = infer.argmax_with_confidence(
                 specificity, prob, 0.5, not_trivial)
             gt_node = train_label_map.to_node[gt_labels]
@@ -892,16 +892,12 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         metric_means = {method: {field: metric_totals[method][field] / example_count
                                  for field in metric_totals[method]} for method in pred}
         for method in pred:
+            logging.info(
+                '%s: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g', method,
+                metric_means[method]['exact'], metric_means[method]['correct'],
+                metric_means[method]['depth_dist'], metric_means[method]['info_dist'])
             for field in metric_fns:
                 writer.add_scalar(f'{field}/{method}/train', metric_means[method][field], epoch)
-        logging.info(
-            'leaf: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g',
-            metric_means['leaf']['exact'], metric_means['leaf']['correct'],
-            metric_means['leaf']['depth_dist'], metric_means['leaf']['info_dist'])
-        logging.info(
-            'majority: exact %.3f, correct %.3f, depth_dist %.4g, info_dist %.4g',
-            metric_means['majority']['exact'], metric_means['majority']['correct'],
-            metric_means['majority']['depth_dist'], metric_means['majority']['info_dist'])
 
         scheduler.step()
 

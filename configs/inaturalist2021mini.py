@@ -27,6 +27,8 @@ def get_config():
             'momentum': 0.9,
             'weight_decay': 3e-4,
             'label_smoothing': 0.0,
+            'margin': '',
+            'margin_tau': 1.0,
             'hxe_alpha': 0.0,
             'hier_normalize': '',
             'focal_alpha': 0.25,

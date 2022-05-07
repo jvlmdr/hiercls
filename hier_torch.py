@@ -1399,9 +1399,12 @@ class SoftMarginLoss(nn.Module):
     def __init__(
             self, tree: hier.Hierarchy,
             with_leaf_targets: bool,
+            hardness: str = 'soft',
             margin: str = 'depth_dist',
             tau: float = 1.0):
         super().__init__()
+        if hardness not in ('soft', 'hard'):
+            raise ValueError('unknown hardness', hardness)
         n = tree.num_nodes()
         label_order = tree.leaf_subset() if with_leaf_targets else np.arange(n)
 
@@ -1409,41 +1412,77 @@ class SoftMarginLoss(nn.Module):
         if margin in ('edge_dist', 'depth_dist'):
             # label_margin = metrics.edge_dist(tree, label_order[:, None], np.arange(n)[None, :])
             depth = tree.depths()
-            label_margin = metrics.LCAMetric(tree, depth).dist(label_order[:, None], np.arange(n))
+            margin_arr = metrics.LCAMetric(tree, depth).dist(label_order[:, None], np.arange(n))
         elif margin == 'incorrect':
             is_ancestor = tree.ancestor_mask()
             is_correct = is_ancestor[:, label_order].T
-            label_margin = 1 - is_correct
+            margin_arr = 1 - is_correct
         elif margin == 'info_dist':
             # TODO: Does natural log make most sense here?
             info = np.log(tree.num_leaf_nodes() / tree.num_leaf_descendants())
-            label_margin = metrics.LCAMetric(tree, info).dist(label_order[:, None], np.arange(n))
+            margin_arr = metrics.LCAMetric(tree, info).dist(label_order[:, None], np.arange(n))
         elif margin == 'depth_deficient':
             depth = tree.depths()
-            label_margin = metrics.LCAMetric(tree, depth).deficient(label_order[:, None], np.arange(n))
+            margin_arr = metrics.LCAMetric(tree, depth).deficient(label_order[:, None], np.arange(n))
+        elif margin == 'log_depth_f1_error':
+            depth = tree.depths()
+            margin_arr = np.log(1 - metrics.LCAMetric(tree, depth).f1(label_order[:, None], np.arange(n)))
         else:
             raise ValueError('unknown margin', margin)
 
-        correct_margins = label_margin[np.arange(len(label_order)), label_order]
-        if not np.all(correct_margins == 0):
-            raise ValueError('margin with self is not zero', correct_margins)
+        # correct_margins = margin_arr[np.arange(len(label_order)), label_order]
+        # if not np.all(correct_margins == 0):
+        #     raise ValueError('margin with self is not zero', correct_margins)
 
+        self.hardness = hardness
         self.tau = tau
         self.label_order = torch.from_numpy(label_order)
-        self.label_margin = torch.from_numpy(label_margin)
+        self.margin = torch.from_numpy(margin_arr)
 
     def _apply(self, fn):
         super()._apply(fn)
         self.label_order = fn(self.label_order)
-        self.label_margin = fn(self.label_margin)
+        self.margin = fn(self.margin)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         label_node = labels if self.label_order is None else self.label_order[labels]
         label_score = scores.gather(-1, label_node.unsqueeze(-1)).squeeze(-1)
-        loss = -label_score + torch.logsumexp(scores + self.tau * self.label_margin[labels, :], axis=-1)
+        label_margin = self.margin[labels, :]
+        if self.hardness == 'soft':
+            loss = -label_score + torch.logsumexp(scores + self.tau * label_margin, axis=-1)
+        elif self.hardness == 'hard':
+            # loss = -label_score + torch.max(torch.relu(scores + self.tau * label_margin), axis=-1)[0]
+            loss = torch.relu(torch.max(scores - label_score.unsqueeze(-1) + self.tau * label_margin, axis=-1)[0])
+        else:
+            assert False
         return torch.mean(loss)
 
 
 def _apply_or_none(fn: Callable, x: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
     return fn(x) if x is not None else None
+
+
+def subtract_children(tree: hier.Hierarchy, p: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    assert dim in (-1, p.ndim - 1)
+    parent = tree.parents()
+    parent = torch.from_numpy(parent).to(p.device)
+    # Subtract each child from its parent.
+    return p.index_add(-1, parent[1:], p[..., 1:], alpha=-1)
+
+
+class SubtractChildren(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy):
+        super().__init__()
+        self.parent = torch.from_numpy(tree.parents())
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.parent = fn(self.parent)
+        return self
+
+    def forward(self, p: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        assert dim in (-1, p.ndim - 1)
+        # Subtract each child from its parent.
+        return p.index_add(-1, self.parent[1:], p[..., 1:], alpha=-1)
