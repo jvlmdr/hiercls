@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from absl import logging
 import numpy as np
@@ -61,7 +61,8 @@ class FlatLogSoftmax(nn.Module):
         return torch.logsumexp(logp_descendants, dim=-1)
 
 
-class FlatLogSoftmaxNLL(nn.Module):
+class FlatSoftmaxNLL(nn.Module):
+    """Like cross_entropy() but supports internal labels."""
 
     def __init__(self, tree):
         super().__init__()
@@ -572,41 +573,65 @@ def SumLeafDescendants(
 
 class MultiLabelNLL(nn.Module):
 
-    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False):
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            with_leaf_targets: bool = False,
+            include_root: bool = False,
+            node_weight: Optional[torch.Tensor] = None):
         super().__init__()
         # The boolean array binary_targets[i, :] indicates whether
         # each node is an ancestor of node i (including i itself).
         # The root node is excluded since it is always positive.
-        binary_targets = tree.ancestor_mask(strict=False).T[:, 1:]
+        binary_targets = tree.ancestor_mask(strict=False).T
+        if not include_root:
+            binary_targets = binary_targets[:, 1:]
         if with_leaf_targets:
             binary_targets = binary_targets[tree.leaf_subset(), :]
+
+        if node_weight is not None:
+            if not include_root:
+                node_weight = node_weight[:, 1:]
 
         dtype = torch.get_default_dtype()
         self.binary_targets = torch.from_numpy(binary_targets).type(dtype)
         self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
+        self.node_weight = _apply_or_none(torch.from_numpy, node_weight)
 
     def _apply(self, fn):
         super()._apply(fn)
         self.binary_targets = fn(self.binary_targets)
         self.bce_loss = self.bce_loss._apply(fn)
+        self.node_weight = _apply_or_none(fn, self.node_weight)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
         targets = torch.index_select(self.binary_targets, 0, labels)
+        node_loss = self.bce_loss(scores, targets)
         # Reduce over classes.
-        loss = torch.sum(self.bce_loss(scores, targets), dim=dim)
+        if self.node_weight is not None:
+            node_loss = node_loss * self.node_weight
+        loss = torch.sum(node_loss, dim=dim)
         # Take mean over examples.
         return torch.mean(loss)
 
 
 class MultiLabelFocalLoss(nn.Module):
 
-    def __init__(self, tree: hier.Hierarchy, alpha: float, gamma: float, with_leaf_targets: bool = False):
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            alpha: float,
+            gamma: float,
+            with_leaf_targets: bool = False,
+            include_root: bool = False):
         super().__init__()
         # The boolean array binary_targets[i, :] indicates whether
         # each node is an ancestor of node i (including i itself).
         # The root node is excluded since it is always positive.
-        binary_targets = tree.ancestor_mask(strict=False).T[:, 1:]
+        binary_targets = tree.ancestor_mask(strict=False).T
+        if not include_root:
+            binary_targets = binary_targets[:, 1:]
         if with_leaf_targets:
             binary_targets = binary_targets[tree.leaf_subset(), :]
 
@@ -630,12 +655,12 @@ class MultiLabelFocalLoss(nn.Module):
         return torch.mean(loss)
 
 
-def multilabel_likelihood(tree: hier.Hierarchy, scores: torch.Tensor, dim=-1):
-    return torch.exp(multilabel_log_likelihood(tree, scores, dim=dim))
+def multilabel_likelihood(scores: torch.Tensor, dim=-1):
+    return torch.exp(multilabel_log_likelihood(scores, dim=dim))
 
 
-def multilabel_log_likelihood(tree: hier.Hierarchy, scores: torch.Tensor, dim=-1):
-    assert scores.shape[dim] == tree.num_nodes() - 1
+def multilabel_log_likelihood(scores: torch.Tensor, dim=-1):
+    # assert scores.shape[dim] == tree.num_nodes() - 1
     assert dim in (-1, scores.ndim - 1)
     shape = list(scores.shape)
     shape[-1] = 1
@@ -1486,3 +1511,187 @@ class SubtractChildren(nn.Module):
         assert dim in (-1, p.ndim - 1)
         # Subtract each child from its parent.
         return p.index_add(-1, self.parent[1:], p[..., 1:], alpha=-1)
+
+
+class ConditionalMultiLabelLogSigmoid(nn.Module):
+    """Brust and Denzler"""
+
+    def __init__(self, tree: hier.Hierarchy):
+        super().__init__()
+        self.sum_ancestors_fn = SumAncestors(tree, exclude_root=True)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.sum_ancestors_fn._apply(fn)
+        return self
+
+    def forward(self, scores: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        assert dim in (-1, scores.ndim - 1)
+        log_cond_prob = F.logsigmoid(scores)
+        log_prob = self.sum_ancestors_fn(log_cond_prob)
+        return log_prob
+
+
+class ConditionalMultiLabelLoss(nn.Module):
+    """Brust and Denzler
+
+    Positive examples are ancestors.
+    Negative examples are other children of ancestors.
+
+    Assume that labels are leaf nodes for now.
+    """
+
+    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = True):
+        super().__init__()
+        if not with_leaf_targets:
+            raise NotImplementedError
+
+        label_order = tree.leaf_subset()
+        is_ancestor = tree.ancestor_mask()
+        parent = tree.parents(root_loop=True)
+        # is_example[gt, node] = parent[node] `is_ancestor` label_order[gt]
+        is_example = is_ancestor[parent, :][:, label_order].T
+        # is_pos[gt, node] = node `is_ancestor` label_order[gt]
+        is_pos = is_ancestor[:, label_order].T
+
+        dtype = torch.get_default_dtype()
+        self.is_example = torch.from_numpy(is_example).type(dtype)
+        self.is_pos = torch.from_numpy(is_pos).type(dtype)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.is_example = fn(self.is_example)
+        self.is_pos = fn(self.is_pos)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        assert dim in (-1, scores.ndim - 1)
+        is_example = self.is_example[labels, 1:]  # Exclude root node.
+        is_pos = self.is_pos[labels, 1:]
+        bce_loss = is_example * (is_pos * -F.logsigmoid(scores) + (1 - is_pos) * -F.logsigmoid(-scores))
+        loss = torch.sum(bce_loss, dim=-1)
+        return torch.mean(loss)
+
+
+class MultiLabelLossWithAncestorSum(nn.Module):
+    """
+    Salakhutdinov et al. 2011, "Learning to Share Visual Appearance for Multiclass Object Detection"
+    """
+
+    def __init__(self, tree: hier.Hierarchy, multilabel_loss: Callable):
+        super().__init__()
+        self.sum_ancestors = SumAncestors(tree, exclude_root=False)
+        self.multilabel_loss = multilabel_loss
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.sum_ancestors._apply(fn)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        assert dim in (-1, scores.ndim - 1)
+        sum_scores = self.sum_ancestors(scores, dim=dim)
+        # # Exclude score for root when passing to loss.
+        # return self.multilabel_loss(sum_scores[:, 1:], labels)
+        return self.multilabel_loss(sum_scores, labels)
+
+
+# class LeafLossWithAncestorSum(nn.Module):
+#
+#     def __init__(self, tree: hier.Hierarchy, leaf_loss: Callable):
+#         super().__init__()
+#         self.leaf_nodes = torch.from_numpy(tree.leaf_subset())
+#         self.sum_leaf_ancestors = SumLeafAncestors(tree, exclude_root=False)
+#         self.leaf_loss = leaf_loss
+#
+#     def _apply(self, fn):
+#         super()._apply(fn)
+#         self.leaf_nodes = fn(self.leaf_nodes)
+#         self.sum_leaf_ancestors._apply(fn)
+#         return self
+#
+#     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
+#         assert dim in (-1, scores.ndim - 1)
+#         sum_scores = self.sum_leaf_ancestors(scores, dim=dim)
+#         # Exclude score for root when passing to loss.
+#         return self.leaf_loss(sum_scores, labels)
+
+
+class RandomCut(nn.Module):
+
+    def __init__(self, tree: hier.Hierarchy, cut_prob: float, permit_root_cut: bool = False):
+        super().__init__()
+        self.num_nodes = tree.num_nodes()
+        self.cut_prob = cut_prob
+        self.permit_root_cut = permit_root_cut
+        self.sum_ancestors = SumAncestors(tree)
+        self.node_parent = torch.from_numpy(tree.parents(root_loop=True))
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.sum_ancestors._apply(fn)
+        self.node_parent = fn(self.node_parent)
+        return self
+
+    def forward(self, batch_shape: Sequence[int]) -> torch.Tensor:
+        device = self.node_parent.device
+        # Random Bernoulli for every node.
+        drop = torch.bernoulli(torch.full((*batch_shape, self.num_nodes), self.cut_prob))
+        drop = drop.to(device=device)
+        if not self.permit_root_cut:
+            drop[..., 0] = 0
+        # Check whether to keep all ancestors of each node (drop zero ancestors).
+        subtree_mask = (self.sum_ancestors(drop, dim=-1) == 0)
+        # Dilate to keep nodes whose parents belong to subtree.
+        subtree_mask = subtree_mask[..., self.node_parent]
+        subtree_mask[..., 0] = True  # Root is always kept.
+        # Count number of children (do not count parent as child of itself).
+        num_children = torch.zeros((*batch_shape, self.num_nodes), device=device)
+        num_children = num_children.index_add(-1, self.node_parent[1:], subtree_mask[..., 1:].float())
+        # Find boundary of subtree.
+        boundary = subtree_mask & (num_children == 0)
+        return boundary
+
+
+class RandomCutLossWithAncestorSum(nn.Module):
+
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            cut_prob: float,
+            permit_root_cut: bool = False,
+            with_leaf_targets: bool = True):
+        super().__init__()
+        is_ancestor = tree.ancestor_mask(strict=False)
+        # label_to_targets[gt, pr] = 1 iff pr `is_ancestor` gt
+        label_to_targets = is_ancestor.T
+        if with_leaf_targets:
+            label_order = tree.leaf_subset()
+            label_to_targets = label_to_targets[label_order]
+        else:
+            # Need to use FlatSoftmaxNLL?
+            raise NotImplementedError
+
+        self.sum_ancestors = SumAncestors(tree, exclude_root=False)
+        self.random_cut_fn = RandomCut(tree, cut_prob=cut_prob, permit_root_cut=permit_root_cut)
+        self.label_to_targets = torch.from_numpy(label_to_targets)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.sum_ancestors._apply(fn)
+        self.random_cut_fn._apply(fn)
+        self.label_to_targets = fn(self.label_to_targets)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        cut = self.random_cut_fn(scores.shape[:-1])
+        sum_scores = self.sum_ancestors(scores, dim=-1)
+        targets = self.label_to_targets[labels, :]
+        cut_targets = (cut & targets)
+        assert torch.all(torch.sum(cut_targets, dim=-1) == 1)
+        # loss = F.cross_entropy(cut_scores, cut_targets, reduction='none')
+        neg_inf = torch.tensor(-torch.inf, device=scores.device)
+        zero = torch.tensor(0.0, device=scores.device)
+        pos_score = torch.sum(torch.where(cut_targets, sum_scores, zero), dim=-1)
+        loss = -pos_score + torch.logsumexp(torch.where(cut, sum_scores, neg_inf), dim=-1)
+        return torch.mean(loss)

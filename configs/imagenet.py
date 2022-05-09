@@ -21,13 +21,18 @@ def get_config():
         # Config for training algorithm.
         'train': ml_collections.ConfigDict({
             'batch_size': 256,
-            'num_epochs': 100,
+            'num_epochs': 50,
             'warmup_epochs': 0,
             'learning_rate': 0.1,
             'momentum': 0.9,
             'weight_decay': 3e-4,
             'label_smoothing': 0.0,
+            'margin': 'incorrect',
+            'margin_tau': 5.0,
             'hxe_alpha': 0.0,
             'hier_normalize': '',
+            'focal_alpha': 0.25,
+            'focal_gamma': 2.0,
+            'hier_focal_power': 0.0,
         }),
     })

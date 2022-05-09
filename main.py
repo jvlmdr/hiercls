@@ -481,8 +481,10 @@ def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
         num_outputs = tree.num_nodes()
     elif predict in ('hier_softmax', 'bertinetto_hxe'):
         num_outputs = tree.num_nodes() - 1
-    elif predict in ('multilabel', 'multilabel_focal'):
+    elif predict in ('multilabel', 'multilabel_focal', 'cond_multilabel'):
         num_outputs = tree.num_nodes() - 1
+    elif predict in ('share_multilabel', 'share_multilabel_focal', 'share_random_cut'):
+        num_outputs = tree.num_nodes()
     elif predict == 'levelwise_softmax':
         num_outputs = sum(map(len, hier.level_nodes(tree, extend=True)))
     elif predict in ('max_cut_softmax', 'descendant_softmax', 'descendant_softmax_complement'):
@@ -500,7 +502,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         else:
             if config.train.label_smoothing:
                 raise NotImplementedError
-            loss_fn = hier_torch.FlatLogSoftmaxNLL(tree).to(device)
+            loss_fn = hier_torch.FlatSoftmaxNLL(tree).to(device)
         pred_fn = partial(
             lambda sum_fn, theta: sum_fn(F.softmax(theta, dim=-1), dim=-1),
             hier_torch.SumLeafDescendants(tree, strict=False).to(device))
@@ -563,7 +565,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             raise NotImplementedError
         loss_fn = hier_torch.MultiLabelNLL(
             tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
-        pred_fn = partial(hier_torch.multilabel_likelihood, tree)
+        pred_fn = hier_torch.multilabel_likelihood
 
     elif config.predict == 'multilabel_focal':
         if config.train.label_smoothing:
@@ -571,7 +573,65 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         loss_fn = hier_torch.MultiLabelFocalLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
             alpha=config.train.focal_alpha, gamma=config.train.focal_gamma).to(device)
-        pred_fn = partial(hier_torch.multilabel_likelihood, tree)
+        pred_fn = hier_torch.multilabel_likelihood
+
+    elif config.predict == 'cond_multilabel':
+        if config.train.label_smoothing:
+            raise NotImplementedError
+        loss_fn = hier_torch.ConditionalMultiLabelLoss(
+            tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
+        pred_fn = partial(
+            lambda log_sigmoid_fn, theta: torch.exp(log_sigmoid_fn(theta)),
+            hier_torch.ConditionalMultiLabelLogSigmoid(tree).to(device))
+
+    elif config.predict == 'share_multilabel':
+        if config.train.label_smoothing:
+            raise NotImplementedError
+        node_weight = 1. / tree.num_leaf_descendants()
+        loss_fn = hier_torch.MultiLabelLossWithAncestorSum(
+            tree, hier_torch.MultiLabelNLL(
+                tree, with_leaf_targets=config.train_with_leaf_targets,
+                include_root=True, node_weight=node_weight,
+            ).to(device)).to(device)
+        pred_fn = partial(
+            lambda sum_ancestor_fn, theta: torch.sigmoid(sum_ancestor_fn(theta)),
+            hier_torch.SumAncestors(tree, exclude_root=False).to(device))
+
+    # elif config.predict == 'share_flat_softmax':
+    #     if config.train.label_smoothing:
+    #         raise NotImplementedError
+    #     if not config.train_with_leaf_targets:
+    #         raise NotImplementedError
+    #     loss_fn = hier_torch.LeafLossWithAncestorSum(tree, F.cross_entropy).to(device)
+    #     pred_fn = partial(
+    #         lambda sum_ancestor_fn, sum_descendant_fn, theta: (
+    #             sum_descendant_fn(torch.exp(sum_ancestor_fn(theta)))),
+    #         hier_torch.SumLeafAncestors(tree, exclude_root=False).to(device),
+    #         hier_torch.SumLeafDescendants(tree).to(device))
+
+    elif config.predict == 'share_multilabel_focal':
+        if config.train.label_smoothing:
+            raise NotImplementedError
+        # node_weight = 1. / tree.num_leaf_descendants()
+        loss_fn = hier_torch.MultiLabelLossWithAncestorSum(
+            tree, hier_torch.MultiLabelFocalLoss(
+                tree, with_leaf_targets=config.train_with_leaf_targets, include_root=True,
+                alpha=getattr(config.train, 'focal_alpha', 0.5),
+                gamma=getattr(config.train, 'focal_gamma', 0.0),
+            ).to(device)).to(device)
+        pred_fn = partial(
+            lambda sum_ancestor_fn, theta: torch.sigmoid(sum_ancestor_fn(theta)),
+            hier_torch.SumAncestors(tree, exclude_root=False).to(device))
+
+    elif config.predict == 'share_random_cut':
+        if config.train.label_smoothing:
+            raise NotImplementedError
+        loss_fn = hier_torch.RandomCutLossWithAncestorSum(
+            tree, permit_root_cut=False, cut_prob=getattr(config.train, 'random_cut_prob', 0.0),
+            with_leaf_targets=config.train_with_leaf_targets).to(device)
+        pred_fn = partial(
+            lambda sum_ancestor_fn, theta: torch.sigmoid(sum_ancestor_fn(theta)),
+            hier_torch.SumAncestors(tree, exclude_root=False).to(device))
 
     elif config.predict == 'levelwise_softmax':
         assert config.train_with_leaf_targets, 'internal labels not supported'

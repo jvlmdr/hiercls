@@ -3,12 +3,12 @@ import ml_collections
 
 def get_config():
     return ml_collections.ConfigDict({
-        'dataset': 'inaturalist2021',
-        'dataset_root': '/data/manual/inaturalist2021',
-        'model': 'torch_resnet18_pretrain',
-        'train_split': 'train_mini',
+        'dataset': 'imagenet',
+        'dataset_root': '/data/torchvision/imagenet/',
+        'model': 'torch_resnet50',
+        'train_split': 'train',
         'eval_split': 'val',
-        'hierarchy': 'inat21',
+        'hierarchy': 'imagenet_fiveai',
         'predict': 'flat_softmax',
         'train_transform': 'rand_resizedcrop224_hflip',
         'eval_transform': 'resize256_crop224',
@@ -21,7 +21,7 @@ def get_config():
         # Config for training algorithm.
         'train': ml_collections.ConfigDict({
             'batch_size': 64,
-            'num_epochs': 20,
+            'num_epochs': 15,
             'warmup_epochs': 0,
             'learning_rate': 0.01,
             'momentum': 0.9,
@@ -34,6 +34,5 @@ def get_config():
             'focal_alpha': 0.25,
             'focal_gamma': 2.0,
             'hier_focal_power': 0.0,
-            'random_cut_prob': 0.1,
         }),
     })
