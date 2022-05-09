@@ -804,8 +804,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                 'prob': [],
                 'metric': {field: [] for field in metric_fns},
             }
-            # Voluminous per-example predictions. To be written to a separate file.
-            full_outputs = {'prob': []}
+            # # Voluminous per-example predictions. To be written to a separate file.
+            # full_outputs = {'prob': []}
 
             net.eval()
             with torch.inference_mode():
@@ -826,8 +826,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     pred['leaf'] = infer.argmax_where(prob, is_leaf)
                     max_leaf_prob = infer.max_where(prob, is_leaf)
                     pred['exclusive'] = np.argmax(subtract_children(torch.from_numpy(prob)).numpy(), axis=-1)
-                    pred['majority'] = infer.argmax_with_confidence(
-                        specificity, prob, 0.5, not_trivial)
+                    pred['majority'] = infer.argmax_with_confidence(specificity, prob, 0.5, not_trivial)
                     # Truncate predictions where more specific than ground-truth.
                     # (Only necessary if some labels are not leaf nodes.)
                     # TODO: Need to do for metric sequences as well!
@@ -840,7 +839,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                     # outputs['label'].append(labels)
                     outputs['original_label'].append(gt_labels)
                     outputs['max_leaf_prob'].append(max_leaf_prob)
-                    full_outputs['prob'].append(prob)
+                    # full_outputs['prob'].append(prob)
                     for method in PREDICT_METHODS:
                         outputs['pred'][method].append(pred[method])
                         for field in metric_fns:
@@ -850,7 +849,8 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                             metric_totals[method][field] += metric_value.sum()
 
                     pred_seqs = [
-                        infer.pareto_optimal_predictions(specificity, p, 0.5, not_trivial)
+                        # infer.pareto_optimal_predictions(specificity, p, 0.5, not_trivial)
+                        infer.pareto_optimal_predictions(specificity, p, None, not_trivial)
                         for p in prob
                     ]
                     # TODO: Could vectorize if necessary.
@@ -881,7 +881,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             # Concatenate minibatches into large array.
             leaf_predicate = lambda x: not isinstance(x, dict)  # Treat lists as values, not containers.
             outputs = tree_util.tree_map(np.concatenate, outputs, is_leaf=leaf_predicate)
-            full_outputs = tree_util.tree_map(np.concatenate, full_outputs, is_leaf=leaf_predicate)
+            # full_outputs = tree_util.tree_map(np.concatenate, full_outputs, is_leaf=leaf_predicate)
 
             # TODO: Avoid memory consumption when not writing outputs to filesystem.
             if experiment_dir is not None and epoch % FLAGS.save_freq == 0:
@@ -892,15 +892,15 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
                 with open(path, 'wb') as f:
                     pickle.dump(outputs, f)
                 # Sequence of operating points per example.
-                path = experiment_dir / f'predictions/operating-points-epoch-{epoch_str}.pkl'
+                path = experiment_dir / f'predictions/pareto-output-epoch-{epoch_str}.pkl'
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, 'wb') as f:
                     pickle.dump(seq_outputs, f)
-                # Write raw predictions to filesystem.
-                path = experiment_dir / f'predictions/full-output-epoch-{epoch_str}.pkl'
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with open(path, 'wb') as f:
-                    pickle.dump(full_outputs, f)
+                # # Write raw predictions to filesystem.
+                # path = experiment_dir / f'predictions/full-output-epoch-{epoch_str}.pkl'
+                # path.parent.mkdir(parents=True, exist_ok=True)
+                # with open(path, 'wb') as f:
+                #     pickle.dump(full_outputs, f)
 
         if not epoch < config.train.num_epochs:
             break
@@ -940,8 +940,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
             pred = {}
             pred['leaf'] = infer.argmax_where(prob, is_leaf)
             pred['exclusive'] = np.argmax(subtract_children(torch.from_numpy(prob)).numpy(), axis=-1)
-            pred['majority'] = infer.argmax_with_confidence(
-                specificity, prob, 0.5, not_trivial)
+            pred['majority'] = infer.argmax_with_confidence(specificity, prob, 0.5, not_trivial)
             gt_node = train_label_map.to_node[gt_labels]
 
             for method in PREDICT_METHODS:
