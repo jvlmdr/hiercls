@@ -92,6 +92,7 @@ def default_print_func(title, i, n, now, start_time, prev_i, prev_time):
         progress_str += '; remaining {} of {}'.format(
             _format_dur(time_rem), _format_dur(time_total))
     print(progress_str, file=sys.stderr)
+    sys.stderr.flush()
 
 
 def _format_dur(seconds):
