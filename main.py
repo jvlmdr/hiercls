@@ -34,7 +34,6 @@ import progmet
 
 EVAL_BATCH_SIZE = 256
 SOURCE_DIR = pathlib.Path(__file__).parent
-LOADER_PREFETCH_FACTOR = 2
 TENSORBOARD_FLUSH_SECS = 10
 
 PREDICT_METHODS = ['leaf', 'majority', 'exclusive']
@@ -59,6 +58,8 @@ flags.DEFINE_integer(
     'save_freq', 10, 'Frequency with which to save model and results (epochs).')
 flags.DEFINE_integer(
     'loader_num_workers', 8, 'Number of data loaders (affects memory footprint).')
+flags.DEFINE_integer(
+    'loader_prefetch_factor', 2, 'Number of samples prefetched by each worker.')
 flags.DEFINE_bool(
     'loader_pin_memory', False, 'Use page-locked memory in training data loader.')
 flags.DEFINE_string('device', 'cuda', 'Pytorch device.')
@@ -697,14 +698,14 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         shuffle=True,
         pin_memory=FLAGS.loader_pin_memory,
         num_workers=FLAGS.loader_num_workers,
-        prefetch_factor=LOADER_PREFETCH_FACTOR)
+        prefetch_factor=FLAGS.loader_prefetch_factor)
     eval_loader = torch.utils.data.DataLoader(
         dataset=eval_dataset,
         batch_size=EVAL_BATCH_SIZE,
         shuffle=False,
         pin_memory=False,  # FLAGS.loader_pin_memory,
         num_workers=FLAGS.loader_num_workers,
-        prefetch_factor=LOADER_PREFETCH_FACTOR)
+        prefetch_factor=FLAGS.loader_prefetch_factor)
 
     input_shape = tuple(train_dataset[0][0].shape)
     num_outputs = get_num_outputs(config.predict, tree)
