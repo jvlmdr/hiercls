@@ -513,8 +513,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         loss_fn = hier_torch.SoftMarginLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
             hardness={'soft_margin': 'soft', 'hard_margin': 'hard'}[config.predict],
-            margin=getattr(config.train, 'margin', 'depth_dist'),
-            tau=getattr(config.train, 'margin_tau', 1.0)).to(device)
+            margin=config.train.margin, tau=config.train.margin_tau).to(device)
         pred_fn = partial(
             lambda sum_fn, theta: sum_fn(F.softmax(theta, dim=-1), dim=-1),
             hier_torch.SumDescendants(tree, strict=False).to(device))
@@ -618,8 +617,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         loss_fn = hier_torch.MultiLabelLossWithAncestorSum(
             tree, hier_torch.MultiLabelFocalLoss(
                 tree, with_leaf_targets=config.train_with_leaf_targets, include_root=True,
-                alpha=getattr(config.train, 'focal_alpha', 0.5),
-                gamma=getattr(config.train, 'focal_gamma', 0.0),
+                alpha=config.train.focal_alpha, gamma=config.train.focal_gamma,
             ).to(device)).to(device)
         pred_fn = partial(
             lambda sum_ancestor_fn, theta: torch.sigmoid(sum_ancestor_fn(theta)),
@@ -629,7 +627,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         if config.train.label_smoothing:
             raise NotImplementedError
         loss_fn = hier_torch.RandomCutLossWithAncestorSum(
-            tree, permit_root_cut=False, cut_prob=getattr(config.train, 'random_cut_prob', 0.0),
+            tree, permit_root_cut=False, cut_prob=config.train.random_cut_prob,
             with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
             lambda sum_ancestor_fn, theta: torch.sigmoid(sum_ancestor_fn(theta)),
