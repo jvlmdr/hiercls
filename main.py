@@ -483,10 +483,12 @@ def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
         num_outputs = tree.num_nodes()
     elif predict in ('hier_softmax', 'bertinetto_hxe'):
         num_outputs = tree.num_nodes() - 1
-    elif predict in ('multilabel', 'multilabel_focal', 'cond_multilabel'):
+    elif predict in ('multilabel', 'multilabel_focal', 'cond_multilabel', 'random_cut'):
         num_outputs = tree.num_nodes() - 1
-    elif predict in ('share_multilabel', 'share_multilabel_focal', 'share_random_cut'):
+    elif predict in ('share_multilabel', 'share_multilabel_focal'):
         num_outputs = tree.num_nodes()
+    elif predict == 'share_random_cut':
+        num_outputs = tree.num_nodes() - 1
     elif predict == 'levelwise_softmax':
         num_outputs = sum(map(len, hier.level_nodes(tree, extend=True)))
     elif predict in ('max_cut_softmax', 'descendant_softmax', 'descendant_softmax_complement'):
@@ -624,14 +626,24 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             hier_torch.SumAncestors(tree, exclude_root=False).to(device))
 
     elif config.predict == 'share_random_cut':
+        # All likelihoods depend on the root and loss is invariant to it.
+        root_logit = 5.0  # 1/(1 + exp(-5)) ~ 1 - exp(-5) > 0.99
         if config.train.label_smoothing:
             raise NotImplementedError
         loss_fn = hier_torch.RandomCutLossWithAncestorSum(
-            tree, permit_root_cut=False, cut_prob=config.train.random_cut_prob,
+            tree, config.train.random_cut_prob, permit_root_cut=False,
             with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
-            lambda sum_ancestor_fn, theta: torch.sigmoid(sum_ancestor_fn(theta)),
-            hier_torch.SumAncestors(tree, exclude_root=False).to(device))
+            lambda sum_ancestor_fn, theta: torch.sigmoid(root_logit + sum_ancestor_fn(theta)),
+            hier_torch.SumAncestors(tree, exclude_root=True).to(device))
+
+    elif config.predict == 'random_cut':
+        if config.train.label_smoothing:
+            raise NotImplementedError
+        loss_fn = hier_torch.RandomCutLoss(
+            tree, config.train.random_cut_prob, permit_root_cut=False,
+            with_leaf_targets=config.train_with_leaf_targets).to(device)
+        pred_fn = hier_torch.multilabel_likelihood
 
     elif config.predict == 'levelwise_softmax':
         assert config.train_with_leaf_targets, 'internal labels not supported'

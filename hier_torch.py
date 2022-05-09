@@ -1653,7 +1653,7 @@ class RandomCut(nn.Module):
         return boundary
 
 
-class RandomCutLossWithAncestorSum(nn.Module):
+class RandomCutLoss(nn.Module):
 
     def __init__(
             self,
@@ -1672,26 +1672,54 @@ class RandomCutLossWithAncestorSum(nn.Module):
             # Need to use FlatSoftmaxNLL?
             raise NotImplementedError
 
-        self.sum_ancestors = SumAncestors(tree, exclude_root=False)
         self.random_cut_fn = RandomCut(tree, cut_prob=cut_prob, permit_root_cut=permit_root_cut)
         self.label_to_targets = torch.from_numpy(label_to_targets)
 
     def _apply(self, fn):
         super()._apply(fn)
-        self.sum_ancestors._apply(fn)
         self.random_cut_fn._apply(fn)
         self.label_to_targets = fn(self.label_to_targets)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         cut = self.random_cut_fn(scores.shape[:-1])
-        sum_scores = self.sum_ancestors(scores, dim=-1)
         targets = self.label_to_targets[labels, :]
+        # No loss for root node.
+        cut = cut[..., 1:]
+        targets = targets[..., 1:]
+        # Obtain targets in cut subset.
         cut_targets = (cut & targets)
         assert torch.all(torch.sum(cut_targets, dim=-1) == 1)
         # loss = F.cross_entropy(cut_scores, cut_targets, reduction='none')
         neg_inf = torch.tensor(-torch.inf, device=scores.device)
         zero = torch.tensor(0.0, device=scores.device)
-        pos_score = torch.sum(torch.where(cut_targets, sum_scores, zero), dim=-1)
-        loss = -pos_score + torch.logsumexp(torch.where(cut, sum_scores, neg_inf), dim=-1)
+        pos_score = torch.sum(torch.where(cut_targets, scores, zero), dim=-1)
+        loss = -pos_score + torch.logsumexp(torch.where(cut, scores, neg_inf), dim=-1)
         return torch.mean(loss)
+
+
+class RandomCutLossWithAncestorSum(nn.Module):
+
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            cut_prob: float,
+            permit_root_cut: bool = False,
+            with_leaf_targets: bool = True):
+        super().__init__()
+        # Exclude root! No loss for it.
+        self.sum_ancestors = SumAncestors(tree, exclude_root=True)
+        self.random_cut_loss_fn = RandomCutLoss(
+            tree, cut_prob, permit_root_cut=permit_root_cut,
+            with_leaf_targets=with_leaf_targets)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.sum_ancestors._apply(fn)
+        self.random_cut_loss_fn._apply(fn)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        sum_scores = self.sum_ancestors(scores, dim=-1)
+        sum_scores = sum_scores[..., 1:]
+        return self.random_cut_loss_fn(sum_scores, labels)
