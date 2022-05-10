@@ -10,7 +10,6 @@ from typing import Callable, List, Optional, Sequence, Tuple
 from absl import app
 from absl import flags
 from absl import logging
-from jax import tree_util
 from ml_collections import config_flags
 import ml_collections
 import numpy as np
@@ -31,6 +30,7 @@ import metrics
 import models.kuangliu_cifar.resnet
 import models.moit.preact_resnet
 import progmet
+import tree_util
 
 EVAL_BATCH_SIZE = 256
 SOURCE_DIR = pathlib.Path(__file__).parent
@@ -638,12 +638,15 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             hier_torch.SumAncestors(tree, exclude_root=True).to(device))
 
     elif config.predict == 'random_cut':
+        root_logit = 5.0  # 1/(1 + exp(-5)) ~ 1 - exp(-5) > 0.99
         if config.train.label_smoothing:
             raise NotImplementedError
         loss_fn = hier_torch.RandomCutLoss(
             tree, config.train.random_cut_prob, permit_root_cut=False,
             with_leaf_targets=config.train_with_leaf_targets).to(device)
-        pred_fn = hier_torch.multilabel_likelihood
+        pred_fn = partial(
+            lambda sum_ancestor_fn, theta: torch.sigmoid(root_logit + sum_ancestor_fn(theta)),
+            hier_torch.SumAncestors(tree, exclude_root=True).to(device))
 
     elif config.predict == 'levelwise_softmax':
         assert config.train_with_leaf_targets, 'internal labels not supported'
