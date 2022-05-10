@@ -75,7 +75,12 @@ def argmax_where(
         axis: int = -1,
         keepdims: bool = False) -> np.ndarray:
     # Will raise an exception if not np.all(np.any(condition, axis=axis)).
-    return np.nanargmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
+    # return np.nanargmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
+    # nanargmax() only has keepdims for numpy>=1.22
+    result = np.nanargmax(np.where(condition, value, np.nan), axis=axis)
+    if keepdims:
+        result = np.expand_dims(result, axis)
+    return result
 
 
 def max_where(
@@ -84,7 +89,11 @@ def max_where(
         axis: int = -1,
         keepdims: bool = False) -> np.ndarray:
     assert np.all(np.any(condition, axis=axis)), 'require at least one valid element'
-    return np.nanmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
+    # return np.nanmax(np.where(condition, value, np.nan), axis=axis, keepdims=keepdims)
+    result = np.nanmax(np.where(condition, value, np.nan), axis=axis)
+    if keepdims:
+        result = np.expand_dims(result, axis)
+    return result
 
 
 def arglexmin(keys: Tuple[np.ndarray, ...], axis: int = -1) -> np.ndarray:
@@ -104,8 +113,11 @@ def arglexmin_where(
     # Take first element in order that satisfies condition.
     # TODO: Would be faster to take subset and then sort?
     # Would this break the vectorization?
-    first_valid = np.argmax(np.take_along_axis(condition, order, axis=axis),
-                            axis=axis, keepdims=True)
+    # first_valid = np.argmax(np.take_along_axis(condition, order, axis=axis),
+    #                         axis=axis, keepdims=True)
+    first_valid = np.expand_dims(
+        np.argmax(np.take_along_axis(condition, order, axis=axis), axis=axis),
+        axis)
     result = np.take_along_axis(order, first_valid, axis=axis)
     if not keepdims:
         result = np.squeeze(result, axis=axis)
