@@ -1,8 +1,8 @@
 stages:
-  - build
+  - docker
 
-build1:
-  stage: build
+docker_build_master:
+  stage: docker
   when: manual
   image:
     name: gcr.io/kaniko-project/executor:debug
@@ -10,12 +10,14 @@ build1:
   before_script:
     - export VERSION=$CI_PIPELINE_ID
   script:
+    - echo "$CI_REGISTRY_IMAGE"
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
     - >-
       /kaniko/executor
-      --cache=true
       --context $CI_PROJECT_DIR
       --dockerfile $CI_PROJECT_DIR/Dockerfile
-      --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
-      --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
-      --destination $CI_REGISTRY_IMAGE:latest      
+      --build-arg pip_index=$PIP_INDEX
+      --build-arg pip_index_url=$PIP_INDEX_URL
+      --build-arg version=$VERSION
+      --destination $CI_REGISTRY_IMAGE:$VERSION
+      --destination $CI_REGISTRY_IMAGE:latest
