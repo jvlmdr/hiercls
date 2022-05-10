@@ -17,4 +17,3 @@ build1:
       --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
       --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
       --destination $CI_REGISTRY_IMAGE:latest      
-  only: [main]
