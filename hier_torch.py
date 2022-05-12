@@ -655,17 +655,22 @@ class MultiLabelFocalLoss(nn.Module):
         return torch.mean(loss)
 
 
-def multilabel_likelihood(scores: torch.Tensor, dim=-1):
-    return torch.exp(multilabel_log_likelihood(scores, dim=dim))
-
-
-def multilabel_log_likelihood(scores: torch.Tensor, dim=-1):
-    # assert scores.shape[dim] == tree.num_nodes() - 1
+def multilabel_log_likelihood(
+        scores: torch.Tensor,
+        dim: int = -1,
+        insert_root: bool = False,
+        replace_root: bool = False) -> torch.Tensor:
+    assert not (insert_root and replace_root)
     assert dim in (-1, scores.ndim - 1)
-    shape = list(scores.shape)
-    shape[-1] = 1
-    zero = torch.zeros(shape, dtype=scores.dtype, device=scores.device)
-    return torch.cat([zero, F.logsigmoid(scores)], dim=-1)
+    device = scores.device
+    logp = F.logsigmoid(scores)
+    if insert_root:
+        zero = torch.zeros((*scores.shape[:-1], 1), device=device)
+        logp = torch.cat([zero, logp], dim=-1)
+    elif replace_root:
+        zero = torch.zeros((*scores.shape[:-1], 1), device=device)
+        logp = logp.index_copy(-1, torch.tensor([0], device=device), zero)
+    return logp
 
 
 class HierLogSigmoid(nn.Module):

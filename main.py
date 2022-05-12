@@ -568,7 +568,8 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             raise NotImplementedError
         loss_fn = hier_torch.MultiLabelNLL(
             tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
-        pred_fn = hier_torch.multilabel_likelihood
+        pred_fn = lambda theta: torch.exp(
+            hier_torch.multilabel_log_likelihood(theta, insert_root=True))
 
     elif config.predict == 'multilabel_focal':
         if config.train.label_smoothing:
@@ -576,7 +577,8 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         loss_fn = hier_torch.MultiLabelFocalLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
             alpha=config.train.focal_alpha, gamma=config.train.focal_gamma).to(device)
-        pred_fn = hier_torch.multilabel_likelihood
+        pred_fn = lambda theta: torch.exp(
+            hier_torch.multilabel_log_likelihood(theta, insert_root=True))
 
     elif config.predict == 'cond_multilabel':
         if config.train.label_smoothing:
@@ -627,25 +629,25 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
 
     elif config.predict == 'share_random_cut':
         # All likelihoods depend on the root and loss is invariant to it.
-        root_logit = 5.0  # 1/(1 + exp(-5)) ~ 1 - exp(-5) > 0.99
         if config.train.label_smoothing:
             raise NotImplementedError
         loss_fn = hier_torch.RandomCutLossWithAncestorSum(
             tree, config.train.random_cut_prob, permit_root_cut=False,
             with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
-            lambda sum_ancestor_fn, theta: torch.sigmoid(root_logit + sum_ancestor_fn(theta)),
+            lambda sum_ancestor_fn, theta: torch.exp(hier_torch.multilabel_log_likelihood(
+                sum_ancestor_fn(theta), replace_root=True)),
             hier_torch.SumAncestors(tree, exclude_root=True).to(device))
 
     elif config.predict == 'random_cut':
-        root_logit = 5.0  # 1/(1 + exp(-5)) ~ 1 - exp(-5) > 0.99
         if config.train.label_smoothing:
             raise NotImplementedError
         loss_fn = hier_torch.RandomCutLoss(
             tree, config.train.random_cut_prob, permit_root_cut=False,
             with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
-            lambda sum_ancestor_fn, theta: torch.sigmoid(root_logit + sum_ancestor_fn(theta)),
+            lambda sum_ancestor_fn, theta: torch.exp(hier_torch.multilabel_log_likelihood(
+                sum_ancestor_fn(theta), replace_root=True)),
             hier_torch.SumAncestors(tree, exclude_root=True).to(device))
 
     elif config.predict == 'levelwise_softmax':
