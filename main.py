@@ -660,30 +660,30 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             hier_torch.LevelwiseLogSoftmax(tree).to(device))
 
     elif config.predict == 'max_cut_softmax':
-        loss_fn = hier_torch.MaxCutSoftmaxLoss(
+        loss_fn = hier_torch.DescendantSoftmaxLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
             lambda log_softmax, theta: torch.exp(log_softmax(theta)),
-            hier_torch.MaxCutLogSoftmax(tree).to(device))
+            hier_torch.DescendantLogSoftmax(tree, max_reduction='max').to(device))
 
     elif config.predict == 'descendant_softmax':
         node_weight = torch.from_numpy(1. / tree.num_leaf_descendants()).float()
-        loss_fn = hier_torch.MaxCutSoftmaxLoss(
+        loss_fn = hier_torch.DescendantSoftmaxLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
             max_reduction='logsumexp', node_weight=node_weight,
             focal_power=getattr(config.train, 'hier_focal_power', None)).to(device)
         pred_fn = partial(
             lambda log_softmax, theta: torch.exp(log_softmax(theta)),
-            hier_torch.MaxCutLogSoftmax(tree, max_reduction='logsumexp').to(device))
+            hier_torch.DescendantLogSoftmax(tree, max_reduction='logsumexp').to(device))
 
     elif config.predict == 'descendant_softmax_complement':
         node_weight = torch.from_numpy(1. / tree.num_leaf_descendants()).float()
-        loss_fn = hier_torch.MaxCutSoftmaxComplementLoss(
+        loss_fn = hier_torch.SoftMaxDescendantCousinLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
             max_reduction='logsumexp', node_weight=node_weight).to(device)
         pred_fn = partial(
             lambda log_softmax, theta: torch.exp(log_softmax(theta)),
-            hier_torch.MaxCutLogSoftmax(tree, max_reduction='logsumexp').to(device))
+            hier_torch.DescendantLogSoftmax(tree, max_reduction='logsumexp').to(device))
 
     # elif config.predict == 'hier_sigmoid':
     #     if config.train.label_smoothing:

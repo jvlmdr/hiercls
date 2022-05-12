@@ -1,4 +1,5 @@
 from functools import partial
+from multiprocessing import reduction
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from absl import logging
@@ -1208,9 +1209,9 @@ def max_cut_log_softmax(
     return log_z - log_z[..., [0]]
 
 
-class MaxCutLogSoftmax(nn.Module):
+class DescendantLogSoftmax(nn.Module):
 
-    def __init__(self, tree: hier.Hierarchy, max_reduction: str = 'max'):
+    def __init__(self, tree: hier.Hierarchy, max_reduction: str = 'logsumexp'):
         super().__init__()
         self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
 
@@ -1257,16 +1258,18 @@ def max_cut_softmax_loss(
     return torch.mean(loss)
 
 
-class MaxCutSoftmaxLoss(nn.Module):
+class DescendantSoftmaxLoss(nn.Module):
 
     def __init__(
             self,
             tree: hier.Hierarchy,
             with_leaf_targets: bool,
-            max_reduction: str = 'max',
+            max_reduction: str = 'logsumexp',
             node_weight: Optional[torch.Tensor] = None,
-            focal_power: Optional[float] = None):
+            focal_power: Optional[float] = None,
+            reduction: str = 'logsumexp'):
         super().__init__()
+        assert reduction in ('mean', 'none', None)
         label_paths = tree.paths_padded()
         label_depths = tree.depths()
         if with_leaf_targets:
@@ -1278,6 +1281,7 @@ class MaxCutSoftmaxLoss(nn.Module):
         self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
         self.node_weight = node_weight
         self.focal_power = focal_power
+        self.reduction = reduction
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -1304,7 +1308,10 @@ class MaxCutSoftmaxLoss(nn.Module):
             loss = loss * self.node_weight[ancestors]
         loss = torch.where(mask, loss, torch.tensor(0., device=scores.device))
         loss = torch.sum(loss, dim=-1)
-        return torch.mean(loss)
+        if self.reduction == 'mean':
+            return torch.mean(loss)
+        else:
+            return loss
 
 
 def max_cut_softmax_complement_loss(
@@ -1351,15 +1358,17 @@ def max_cut_softmax_complement_loss(
     return torch.mean(loss)
 
 
-class MaxCutSoftmaxComplementLoss(nn.Module):
+class DescendantSoftmaxCousinLoss(nn.Module):
 
     def __init__(
             self,
             tree: hier.Hierarchy,
             with_leaf_targets: bool,
-            max_reduction: str = 'max',
-            node_weight: Optional[torch.Tensor] = None):
+            max_reduction: str = 'logsumexp',
+            node_weight: Optional[torch.Tensor] = None,
+            reduction: str = 'mean'):
         super().__init__()
+        assert reduction in ('mean', 'none', None)
         node_siblings = hier.siblings_padded(tree, method='constant', constant_value=-1)
         label_paths = tree.paths_padded()
         if with_leaf_targets:
@@ -1370,6 +1379,7 @@ class MaxCutSoftmaxComplementLoss(nn.Module):
         self.label_paths = torch.from_numpy(label_paths)
         self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
         self.node_weight = node_weight
+        self.reduction = reduction
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -1407,7 +1417,11 @@ class MaxCutSoftmaxComplementLoss(nn.Module):
         if self.node_weight is not None:
             ancestor_loss = ancestor_loss * self.node_weight[ancestors]
         loss = torch.sum(torch.where(ancestor_mask, ancestor_loss, torch.tensor(0., device=device)), -1)
-        return torch.mean(loss)
+
+        if self.reduction == 'mean':
+            return torch.mean(loss)
+        else:
+            return loss
 
 
 def _logsumexp2(a, b):

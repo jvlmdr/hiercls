@@ -46,3 +46,70 @@ class TestSubtractChildren(unittest.TestCase):
         p = hier_torch.SumDescendants(tree)(expected, dim=-1)
         actual = hier_torch.SubtractChildren(tree)(p, dim=-1)
         torch.testing.assert_allclose(actual, expected)
+
+
+class TestDescendantLogSoftmax(unittest.TestCase):
+
+    def test_random(self):
+        tree = _basic_tree()
+        batch_size = 16
+        n = tree.num_nodes()
+        scores = torch.randn((batch_size, n))
+        log_softmax_fn = hier_torch.DescendantLogSoftmax(tree, max_reduction='logsumexp')
+        logp = log_softmax_fn(scores)
+        self.assertTrue(torch.all(logp <= 0))
+        self.assertTrue(torch.allclose(logp[..., 0], torch.tensor(0.0)))
+        self.assertTrue(torch.all(logp <= logp[..., tree.parents(root_loop=True)]))
+
+
+class TestDescendantSoftmaxLoss(unittest.TestCase):
+
+    def test_random(self):
+        tree = _basic_tree()
+        batch_size = 16
+        n = tree.num_nodes()
+        scores = torch.randn((batch_size, n))
+        labels = torch.randint(1, n, (batch_size,))
+
+        # Take the sum of losses over all ancestors of the label.
+        node_loss = torch.logsumexp(scores, dim=-1, keepdim=True) - scores
+        is_ancestor = tree.ancestor_mask()
+        is_label_ancestor = is_ancestor.T[labels]
+        is_label_ancestor = torch.from_numpy(is_label_ancestor)
+        zero = torch.tensor(0.0)
+        loss = torch.sum(torch.where(is_label_ancestor, node_loss, zero), dim=-1)
+
+        loss_fn = hier_torch.DescendantSoftmaxLoss(
+            tree, with_leaf_targets=False, max_reduction='logsumexp', reduction='none')
+        actual = loss_fn(scores, labels)
+        torch.testing.assert_allclose(actual, loss)
+
+
+class TestDescendantSoftmaxCousinLoss(unittest.TestCase):
+
+    def test_random(self):
+        tree = _basic_tree()
+        batch_size = 16
+        n = tree.num_nodes()
+        scores = torch.randn((batch_size, n))
+        labels = torch.randint(1, n, (batch_size,))
+
+        # For each node, obtain the set of negative nodes and itself.
+        is_ancestor = tree.ancestor_mask()
+        is_cousin = ~(is_ancestor | is_ancestor.T)
+        subset = is_cousin | np.eye(n, dtype=bool)
+        subset = torch.from_numpy(subset)
+        inf = torch.tensor(torch.inf)
+        node_logsumexp = torch.logsumexp(torch.where(subset, scores.unsqueeze(-2), -inf), dim=-1)
+        node_loss = node_logsumexp - scores
+
+        # Take the sum of this over all ancestors of the label.
+        is_label_ancestor = is_ancestor.T[labels]
+        is_label_ancestor = torch.from_numpy(is_label_ancestor)
+        zero = torch.tensor(0.0)
+        loss = torch.sum(torch.where(is_label_ancestor, node_loss, zero), dim=-1)
+
+        loss_fn = hier_torch.DescendantSoftmaxCousinLoss(
+            tree, with_leaf_targets=False, max_reduction='logsumexp', reduction='none')
+        actual = loss_fn(scores, labels)
+        torch.testing.assert_allclose(actual, loss)
