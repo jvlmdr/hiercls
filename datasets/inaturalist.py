@@ -61,8 +61,7 @@ class INaturalist(torchvision.datasets.VisionDataset):
         self.targets = [target for _, target in self.samples]
 
         if self.use_mem:
-            self.images = [_load_bytes(os.path.join(self.root, fname))
-                           for fname, _ in self.samples]
+            self.images = [_load_bytes(fname) for fname, _ in self.samples]
 
     def __getitem__(self, index: int):
         fname, target = self.samples[index]
