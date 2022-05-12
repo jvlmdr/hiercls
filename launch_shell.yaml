@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hier-shell
+  namespace: aiml-valmadre-research
+  labels:
+    gcp_secret_file: data-manager
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: shared-memory
+          emptyDir:
+            medium: Memory
+      containers:
+        - name: hier-shell-container
+          image: pytorch/pytorch:1.10.0-cuda11.3-cudnn8-devel # docker.aiml.team/jack.valmadre/hier-class:latest
+          stdin: true
+          tty: true
+          resources:
+            limits:
+              nvidia.com/gpu: 2
+              memory: 128Gi
+              cpu: 12000m
+            requests:
+              memory: 128Gi
+              cpu: 12000m
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: shared-memory
