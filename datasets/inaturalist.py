@@ -43,10 +43,12 @@ class INaturalist(torchvision.datasets.VisionDataset):
                  root: str,
                  json_file: str,
                  loader: Callable = default_loader,
+                 use_mem: bool = False,
                  **kwargs):
         # Parent constructor sets root and handles transforms.
         super().__init__(root, **kwargs)
         self.loader = loader
+        self.use_mem = use_mem
 
         with open(os.path.join(root, json_file)) as f:
             dataset = json.load(f)
@@ -56,9 +58,17 @@ class INaturalist(torchvision.datasets.VisionDataset):
                         for ann in dataset['annotations']]
         self.targets = [target for _, target in self.samples]
 
+        if self.use_mem:
+            self.images = [
+                self.loader(os.path.join(self.root, fname))) for fname, _ in self.samples
+            ]
+
     def __getitem__(self, index: int):
         fname, target = self.samples[index]
-        sample = self.loader(os.path.join(self.root, fname))
+        if self.use_mem:
+            sample = self.images[index]
+        else:
+            sample = self.loader(os.path.join(self.root, fname))
         if self.transform is not None:
             sample = self.transform(sample)
         if self.target_transform is not None:
