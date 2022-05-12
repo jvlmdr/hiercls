@@ -5,12 +5,10 @@ Furthermore, it may give a different order to the labels (to confirm).
 (The hierarchy uses dataset['category']['id'] from the JSON file.)
 """
 
-import io
 import json
 import os
-from typing import BinaryIO, Callable
+from typing import Callable
 
-import PIL
 import torchvision
 
 default_loader = torchvision.datasets.folder.default_loader
@@ -61,12 +59,13 @@ class INaturalist(torchvision.datasets.VisionDataset):
         self.targets = [target for _, target in self.samples]
 
         if self.use_mem:
-            self.images = [_load_bytes(fname) for fname, _ in self.samples]
+            self.images = [self.loader(os.path.join(self.root, fname))
+                           for fname, _ in self.samples]
 
     def __getitem__(self, index: int):
         fname, target = self.samples[index]
         if self.use_mem:
-            sample = _pil_load(io.BytesIO(self.images[index]))
+            sample = self.images[index]
         else:
             sample = self.loader(os.path.join(self.root, fname))
         if self.transform is not None:
@@ -77,12 +76,3 @@ class INaturalist(torchvision.datasets.VisionDataset):
 
     def __len__(self):
         return len(self.samples)
-
-
-def _load_bytes(fname: str) -> bytes:
-    with open(fname, 'rb') as f:
-        return f.read()
-
-
-def _pil_load(f: BinaryIO) -> PIL.Image.Image:
-    return PIL.Image.open(f).convert('RGB')
