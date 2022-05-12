@@ -65,8 +65,6 @@ flags.DEFINE_bool(
 flags.DEFINE_string('device', 'cuda', 'Pytorch device.')
 flags.DEFINE_integer('seed', None, 'Random seed.')
 
-flags.DEFINE_bool('use_mem', False, 'Load entire dataset into memory.')
-
 flags.DEFINE_bool('resume', False, 'Resume from previous checkpoint.')
 flags.DEFINE_bool('skip_initial_eval', True, 'Skip eval for epoch 0.')
 
@@ -179,9 +177,7 @@ def make_base_dataset(name, root, split, transform_name):
     except KeyError:
         raise ValueError('unknown transform', transform_name)
 
-    return dataset_fn(
-        root, split, transform=transform,
-        **(dict(use_mem=True) if FLAGS.use_mem else {}))
+    return dataset_fn(root, split, transform=transform)
 
 
 def main(_):
