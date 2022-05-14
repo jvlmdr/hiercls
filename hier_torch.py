@@ -126,8 +126,9 @@ def flat_bertinetto_hxe(
 
 class FlatBertinettoHXE(nn.Module):
 
-    def __init__(self, tree, alpha: float, with_leaf_targets: bool):
+    def __init__(self, tree, alpha: float, with_leaf_targets: bool, reduction: str = 'mean'):
         super().__init__()
+        assert reduction in ('mean', 'none', None)
         parent = torch.from_numpy(tree.parents(root_loop=True))
         parent_depth = torch.from_numpy(tree.depths() - 1)
         leaf_subset = torch.from_numpy(tree.leaf_subset())
@@ -138,6 +139,7 @@ class FlatBertinettoHXE(nn.Module):
 
         self.alpha = alpha
         self.num_nodes = tree.num_nodes()
+        self.reduction = reduction
 
         self.leaf_subset = leaf_subset
         self.parent = parent
@@ -173,8 +175,12 @@ class FlatBertinettoHXE(nn.Module):
         weighted_nll = self.sum_ancestors_fn(weighted_cond_nll)
         if self.label_order is not None:
             weighted_nll = weighted_nll[..., self.label_order]
-        label_nll = torch.gather(weighted_nll, -1, labels.unsqueeze(-1)).squeeze(-1)
-        return torch.mean(label_nll)
+        loss = torch.gather(weighted_nll, -1, labels.unsqueeze(-1)).squeeze(-1)
+
+        if self.reduction == 'mean':
+            return torch.mean(loss)
+        else:
+            return loss
 
 
 def hier_softmax_nll(
