@@ -126,56 +126,49 @@ def flat_bertinetto_hxe(
 
 class FlatBertinettoHXE(nn.Module):
 
-    def __init__(self, tree, alpha: float, with_leaf_targets: bool, reduction: str = 'mean'):
+    def __init__(self, tree: hier.Hierarchy, alpha: float, with_leaf_targets: bool, reduction: str = 'mean'):
         super().__init__()
         assert reduction in ('mean', 'none', None)
-        parent = torch.from_numpy(tree.parents(root_loop=True))
-        parent_depth = torch.from_numpy(tree.depths() - 1)
-        leaf_subset = torch.from_numpy(tree.leaf_subset())
+        paths = tree.paths_padded(method='constant', pad_value=-1, exclude_root=False)
+        is_ancestor = tree.ancestor_mask(strict=False)
+        leaf_masks = is_ancestor[:, tree.leaf_mask()]
         if with_leaf_targets:
             label_order = torch.from_numpy(tree.leaf_subset())
-        else:
-            label_order = None
+            paths = paths[label_order, :]
 
         self.alpha = alpha
-        self.num_nodes = tree.num_nodes()
         self.reduction = reduction
-
-        self.leaf_subset = leaf_subset
-        self.parent = parent
-        self.parent_depth = parent_depth
-        self.label_order = label_order
-        self.descendant_logsumexp_fn = DescendantLogSumExp(tree)
-        self.sum_ancestors_fn = SumAncestors(tree, strict=False)
+        self.max_depth = np.max(tree.depths())
+        self.paths = torch.from_numpy(paths)
+        self.leaf_masks = torch.from_numpy(leaf_masks)
 
     def _apply(self, fn):
         super()._apply(fn)
-        self.parent = fn(self.parent)
-        self.parent_depth = fn(self.parent_depth)
-        self.leaf_subset = fn(self.leaf_subset)
-        self.label_order = _apply_to_maybe(fn, self.label_order)
-        self.descendant_logsumexp_fn._apply(fn)
+        self.paths = fn(self.paths)
+        self.leaf_masks = fn(self.leaf_masks)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         assert labels.ndim == scores.ndim - 1
-        weight = torch.exp(-self.alpha * self.parent_depth)
-        # Take log-sum-exp of leaf descendants.
-        scores_full = (
-            torch.full(
-                (*scores.shape[:-1], self.num_nodes), -torch.inf,
-                dtype=torch.float32, device=scores.device)
-            .index_copy(-1, self.leaf_subset, scores))
-        logsumexp = self.descendant_logsumexp_fn(scores_full)
-        log_cond_p = logsumexp - logsumexp[..., self.parent]
-        # Take weighted sum over ancestors.
-        # Weight each conditional likelihood by exp(-alpha * parent_depth).
-        # Note that log_cond_p of root is always zero.
-        weighted_cond_nll = weight * -log_cond_p
-        weighted_nll = self.sum_ancestors_fn(weighted_cond_nll)
-        if self.label_order is not None:
-            weighted_nll = weighted_nll[..., self.label_order]
-        loss = torch.gather(weighted_nll, -1, labels.unsqueeze(-1)).squeeze(-1)
+        device = scores.device
+
+        # TODO: Can use for loop if this uses too much memory (n d with d = log n).
+        # Get leaf-descendant mask for all ancestors.
+        label_path = self.paths[labels]
+        path_valid = (label_path >= 0)
+        label_ancestor_leaf_masks = torch.logical_and(
+            path_valid.unsqueeze(-1),
+            self.leaf_masks[torch.where(path_valid, label_path, 0), :])
+
+        inf = torch.tensor(torch.inf, device=device)
+        lse_ancestor = torch.logsumexp(
+            torch.where(label_ancestor_leaf_masks, scores.unsqueeze(-2), -inf), dim=-1)
+        # lse(parent) - lse(child)
+        cond_nll = -torch.diff(lse_ancestor, dim=-1)
+        cond_nll = torch.where(path_valid[:, 1:], cond_nll, torch.tensor(0.0, device=device))
+        weight = torch.exp(-self.alpha * torch.arange(self.max_depth))
+        weighted_nll = cond_nll * weight
+        loss = torch.sum(weighted_nll, dim=-1)
 
         if self.reduction == 'mean':
             return torch.mean(loss)
