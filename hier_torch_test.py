@@ -61,6 +61,16 @@ class TestFlatSoftmaxNLL(unittest.TestCase):
         expected = -torch.log(p_label)
         torch.testing.assert_allclose(actual, expected)
 
+    def test_vs_log_softmax_random(self):
+        tree = _basic_tree()
+        batch_size = 16
+        leaf_labels = torch.randint(0, tree.num_leaf_nodes(), (batch_size,))
+        labels = torch.from_numpy(tree.leaf_subset())[leaf_labels]
+        scores = torch.randn((batch_size, tree.num_leaf_nodes()))
+        actual = hier_torch.FlatSoftmaxNLL(tree, reduction='none')(scores, labels)
+        expected = F.cross_entropy(scores, leaf_labels, reduction='none')
+        torch.testing.assert_allclose(actual, expected)
+
 
 class TestDescendantLogSoftmax(unittest.TestCase):
 

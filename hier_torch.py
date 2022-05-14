@@ -69,7 +69,7 @@ class FlatSoftmaxNLL(nn.Module):
         super().__init__()
         assert reduction in ('mean', 'none', None)
         if with_leaf_targets:
-            raise ValueError('use F.log_softmax instead!')
+            raise ValueError('use F.cross_entropy() instead!')
         # The value is_ancestor[i, j] is true if node i is an ancestor of node j.
         is_ancestor = tree.ancestor_mask(strict=False)
         # The value is_ancestor_leaf[i, k] is true if node i is an ancestor of leaf k.
