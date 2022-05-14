@@ -65,14 +65,18 @@ class FlatLogSoftmax(nn.Module):
 class FlatSoftmaxNLL(nn.Module):
     """Like cross_entropy() but supports internal labels."""
 
-    def __init__(self, tree):
+    def __init__(self, tree, with_leaf_targets: bool = False, reduction: str = 'mean'):
         super().__init__()
+        assert reduction in ('mean', 'none', None)
+        if with_leaf_targets:
+            raise ValueError('use F.log_softmax instead!')
         # The value is_ancestor[i, j] is true if node i is an ancestor of node j.
         is_ancestor = tree.ancestor_mask(strict=False)
         # The value is_ancestor_leaf[i, k] is true if node i is an ancestor of leaf k.
         is_ancestor_leaf = is_ancestor[:, tree.leaf_mask()]
 
         self.is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf)
+        self.reduction = reduction
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -87,8 +91,12 @@ class FlatSoftmaxNLL(nn.Module):
             logp_leaf.unsqueeze(-2),
             torch.tensor(-torch.inf, device=scores.device))
         logp = torch.logsumexp(logp_descendants, dim=-1)
-        nll = -torch.gather(logp, -1, labels.unsqueeze(-1))
-        return torch.mean(nll)
+        loss = -torch.gather(logp, -1, labels.unsqueeze(-1)).squeeze(-1)
+
+        if self.reduction == 'mean':
+            return torch.mean(loss)
+        else:
+            return loss
 
 
 def flat_bertinetto_hxe(
@@ -1281,7 +1289,7 @@ class DescendantSoftmaxLoss(nn.Module):
             max_reduction: str = 'logsumexp',
             node_weight: Optional[torch.Tensor] = None,
             focal_power: Optional[float] = None,
-            reduction: str = 'logsumexp'):
+            reduction: str = 'mean'):
         super().__init__()
         assert reduction in ('mean', 'none', None)
         label_paths = tree.paths_padded()

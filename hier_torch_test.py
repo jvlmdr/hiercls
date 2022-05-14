@@ -48,6 +48,20 @@ class TestSubtractChildren(unittest.TestCase):
         torch.testing.assert_allclose(actual, expected)
 
 
+class TestFlatSoftmaxNLL(unittest.TestCase):
+
+    def test_random(self):
+        tree = _basic_tree()
+        batch_size = 16
+        labels = torch.randint(0, tree.num_nodes(), (batch_size,))
+        scores = torch.randn((batch_size, tree.num_leaf_nodes()))
+        actual = hier_torch.FlatSoftmaxNLL(tree, reduction='none')(scores, labels)
+        p = hier_torch.SumLeafDescendants(tree)(F.softmax(scores, dim=-1), dim=-1)
+        p_label = torch.gather(p, -1, labels.unsqueeze(-1)).squeeze(-1)
+        expected = -torch.log(p_label)
+        torch.testing.assert_allclose(actual, expected)
+
+
 class TestDescendantLogSoftmax(unittest.TestCase):
 
     def test_random(self):
