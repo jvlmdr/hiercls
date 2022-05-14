@@ -72,27 +72,23 @@ class FlatSoftmaxNLL(nn.Module):
             raise ValueError('use F.cross_entropy() instead!')
         # The value is_ancestor[i, j] is true if node i is an ancestor of node j.
         is_ancestor = tree.ancestor_mask(strict=False)
-        # The value is_ancestor_leaf[i, k] is true if node i is an ancestor of leaf k.
-        is_ancestor_leaf = is_ancestor[:, tree.leaf_mask()]
-
-        self.is_ancestor_leaf = torch.from_numpy(is_ancestor_leaf)
+        leaf_masks = is_ancestor[:, tree.leaf_mask()]
+        self.leaf_masks = torch.from_numpy(leaf_masks)
         self.reduction = reduction
 
     def _apply(self, fn):
         super()._apply(fn)
-        self.is_ancestor_leaf = fn(self.is_ancestor_leaf)
+        self.leaf_masks = fn(self.leaf_masks)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         logp_leaf = F.log_softmax(scores, dim=-1)
         # Obtain logp for leaf descendants, -inf for other nodes.
-        logp_descendants = torch.where(
-            self.is_ancestor_leaf,
-            logp_leaf.unsqueeze(-2),
-            torch.tensor(-torch.inf, device=scores.device))
-        logp = torch.logsumexp(logp_descendants, dim=-1)
-        loss = -torch.gather(logp, -1, labels.unsqueeze(-1)).squeeze(-1)
-
+        label_leaf_mask = self.leaf_masks[labels, :]
+        inf = torch.tensor(torch.inf, device=scores.device)
+        logp_descendants = torch.where(label_leaf_mask, logp_leaf, -inf)
+        logp_label = torch.logsumexp(logp_descendants, dim=-1)
+        loss = -logp_label
         if self.reduction == 'mean':
             return torch.mean(loss)
         else:
