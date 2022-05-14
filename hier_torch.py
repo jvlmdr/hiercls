@@ -147,7 +147,7 @@ class FlatBertinettoHXE(nn.Module):
         self.parent = fn(self.parent)
         self.parent_depth = fn(self.parent_depth)
         self.leaf_subset = fn(self.leaf_subset)
-        self.label_order = _apply_or_none(fn, self.label_order)
+        self.label_order = _apply_to_maybe(fn, self.label_order)
         self.descendant_logsumexp_fn._apply(fn)
         return self
 
@@ -213,7 +213,7 @@ class HierSoftmaxNLL(nn.Module):
 
     def _apply(self, fn):
         super()._apply(fn)
-        self.label_order = _apply_or_none(fn, self.label_order)
+        self.label_order = _apply_to_maybe(fn, self.label_order)
         self.hier_log_softmax = self.hier_log_softmax._apply(fn)
         return self
 
@@ -250,11 +250,11 @@ class HierSoftmaxCrossEntropy(nn.Module):
 
     def _apply(self, fn):
         super()._apply(fn)
-        self.label_order = _apply_or_none(fn, self.label_order)
+        self.label_order = _apply_to_maybe(fn, self.label_order)
         self.hier_cond_log_softmax = self.hier_cond_log_softmax._apply(fn)
         self.sum_label_descendants = self.sum_label_descendants._apply(fn)
         self.prior = fn(self.prior)
-        self.node_weight = _apply_or_none(fn, self.node_weight)
+        self.node_weight = _apply_to_maybe(fn, self.node_weight)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -418,7 +418,7 @@ class HierLogSoftmax(nn.Module):
 #     def _apply(self, fn):
 #         super()._apply(fn)
 #         # Do not apply fn to indices because it might convert dtype.
-#         self.label_order = _apply_or_none(fn, self.label_order)
+#         self.label_order = _apply_to_maybe(fn, self.label_order)
 #         self.hier_log_softmax = self.hier_log_softmax._apply(fn)
 #         return self
 #
@@ -597,13 +597,13 @@ class MultiLabelNLL(nn.Module):
         dtype = torch.get_default_dtype()
         self.binary_targets = torch.from_numpy(binary_targets).type(dtype)
         self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
-        self.node_weight = _apply_or_none(torch.from_numpy, node_weight)
+        self.node_weight = _apply_to_maybe(torch.from_numpy, node_weight)
 
     def _apply(self, fn):
         super()._apply(fn)
         self.binary_targets = fn(self.binary_targets)
         self.bce_loss = self.bce_loss._apply(fn)
-        self.node_weight = _apply_or_none(fn, self.node_weight)
+        self.node_weight = _apply_to_maybe(fn, self.node_weight)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -625,7 +625,15 @@ class MultiLabelFocalLoss(nn.Module):
             alpha: float,
             gamma: float,
             with_leaf_targets: bool = False,
-            include_root: bool = False):
+            include_root: bool = False,
+            weighting_strategy: str = 'none'):
+        """
+        It may be useful to have both alpha and weighting_strategy.
+        With alpha = 0.5, node_weight = 1, have huge initial loss with most for negative.
+        With alpha = 0.9, node_weight = 1, have log(n) nodes with most weight per example.
+        With alpha = 0.5, node_weight = 1/size, have equal weight for all nodes on average.
+        With alpha = 0.9, node_weight = 1/size, equal weight is given to nodes at all levels.
+        """
         super().__init__()
         # The boolean array binary_targets[i, :] indicates whether
         # each node is an ancestor of node i (including i itself).
@@ -636,14 +644,18 @@ class MultiLabelFocalLoss(nn.Module):
         if with_leaf_targets:
             binary_targets = binary_targets[tree.leaf_subset(), :]
 
+        node_weight = make_loss_weights(weighting_strategy, tree, exclude_root=True)
+
         dtype = torch.get_default_dtype()
         self.binary_targets = torch.from_numpy(binary_targets).type(dtype)
         self.alpha = alpha
         self.gamma = gamma
+        self.node_weight = _apply_to_maybe(torch.from_numpy, node_weight)
 
     def _apply(self, fn):
         super()._apply(fn)
         self.binary_targets = fn(self.binary_targets)
+        self.node_weight = _apply_to_maybe(fn, self.node_weight)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -651,6 +663,8 @@ class MultiLabelFocalLoss(nn.Module):
         binary_loss = torchvision.ops.sigmoid_focal_loss(
             scores, targets, alpha=self.alpha, gamma=self.gamma, reduction='none')
         # Reduce over classes.
+        if self.node_weight is not None:
+            binary_loss = binary_loss * self.node_weight
         loss = torch.sum(binary_loss, dim=dim)
         # Take mean over examples.
         return torch.mean(loss)
@@ -773,7 +787,7 @@ class BertinettoHXE(nn.Module):
         super()._apply(fn)
         self.weight = fn(self.weight)
         self.hier_cond_log_softmax_fn = self.hier_cond_log_softmax_fn._apply(fn)
-        self.label_order = _apply_or_none(fn, self.label_order)
+        self.label_order = _apply_to_maybe(fn, self.label_order)
         self.sum_ancestors_fn = self.sum_ancestors_fn._apply(fn)
         return self
 
@@ -1288,7 +1302,7 @@ class DescendantSoftmaxLoss(nn.Module):
         self.label_paths = fn(self.label_paths)
         self.label_depths = fn(self.label_depths)
         self.max_cut_logsumexp = self.max_cut_logsumexp._apply(fn)
-        self.node_weight = _apply_or_none(fn, self.node_weight)
+        self.node_weight = _apply_to_maybe(fn, self.node_weight)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -1386,7 +1400,7 @@ class DescendantSoftmaxCousinLoss(nn.Module):
         self.node_siblings = fn(self.node_siblings)
         self.label_paths = fn(self.label_paths)
         self.max_cut_logsumexp = self.max_cut_logsumexp._apply(fn)
-        self.node_weight = _apply_or_none(fn, self.node_weight)
+        self.node_weight = _apply_to_maybe(fn, self.node_weight)
         return self
 
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -1503,7 +1517,7 @@ class SoftMarginLoss(nn.Module):
         return torch.mean(loss)
 
 
-def _apply_or_none(fn: Callable, x: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+def _apply_to_maybe(fn: Callable, x: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
     return fn(x) if x is not None else None
 
 
@@ -1742,3 +1756,25 @@ class RandomCutLossWithAncestorSum(nn.Module):
         sum_scores = self.sum_ancestors(scores, dim=-1)
         sum_scores = sum_scores[..., 1:]
         return self.random_cut_loss_fn(sum_scores, labels)
+
+
+def make_loss_weights(strategy: str, tree: hier.Hierarchy, exclude_root: bool = False) -> Optional[np.ndarray]:
+    if strategy == 'none' or not strategy:
+        return None
+    if strategy == 'parent':  # Legacy name.
+        strategy = 'inv_parent'
+    node_size = tree.num_leaf_descendants()
+    parent_size = node_size[tree.parents(root_loop=True)]
+    if exclude_root:
+        node_size = node_size[1:]
+        parent_size = parent_size[1:]
+    if strategy == 'inv':
+        return node_size ** -1
+    elif strategy == 'inv_sqrt':
+        return node_size ** -0.5
+    elif strategy == 'inv_parent':
+        return parent_size ** -1
+    elif strategy == 'inv_sqrt_parent':
+        return parent_size ** -0.5
+    else:
+        raise ValueError('unknown weighting strategy', strategy)

@@ -576,7 +576,8 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             raise NotImplementedError
         loss_fn = hier_torch.MultiLabelFocalLoss(
             tree, with_leaf_targets=config.train_with_leaf_targets,
-            alpha=config.train.focal_alpha, gamma=config.train.focal_gamma).to(device)
+            alpha=config.train.focal_alpha, gamma=config.train.focal_gamma,
+            weighting_strategy=config.train.loss_weighting).to(device)
         pred_fn = lambda theta: torch.exp(
             hier_torch.multilabel_log_likelihood(theta, insert_root=True))
 
