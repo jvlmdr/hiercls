@@ -17,3 +17,7 @@ ls ../dl/*.tar.gz | xargs -n 1 -P 2 tar -xvzf
 git clone https://gitlab.aiml.team/jack.valmadre/hier-class.git
 cd hier-class
 pip install --extra-index-url https://download.pytorch.org/whl/cu113 -r requirements.txt
+
+# ...
+
+gsutil -m rsync -r experiments/ gs://aiml-valmadre-research-data/experiments/
