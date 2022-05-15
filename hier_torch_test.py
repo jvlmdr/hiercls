@@ -1,11 +1,15 @@
 import unittest
 
+from pytest import mark
 import numpy as np
 import torch
 import torch.nn.functional as F
 
 import hier
 import hier_torch
+
+DEVICES = ['cpu', 'cuda']
+
 
 def _basic_tree():
     #      0
@@ -15,17 +19,19 @@ def _basic_tree():
     # 3 4 5 6 7 8
     return hier.Hierarchy(np.asarray([-1, 0, 0, 1, 1, 1, 2, 2, 2]))
 
-class TestHierSoftmaxCrossEntropy(unittest.TestCase):
 
-    def test_equal_hier_softmax_nll(self):
-        tree = _basic_tree()
-        batch_size = 16
-        n = tree.num_nodes()
-        scores = torch.randn((batch_size, n - 1))
-        labels = torch.randint(n, size=(batch_size,))
-        expected = hier_torch.hier_softmax_nll(tree, scores, labels)
-        actual = hier_torch.HierSoftmaxCrossEntropy(tree, with_leaf_targets=False)(scores, labels)
-        torch.testing.assert_allclose(actual, expected)
+@mark.parametrize('device', DEVICES)
+def test_HierSoftMaxCrossEntropy_equal_hier_softmax_nll(device):
+    tree = _basic_tree()
+    batch_size = 16
+    n = tree.num_nodes()
+    scores = torch.testing.make_tensor((batch_size, n - 1), device, torch.float32)
+    labels = torch.testing.make_tensor((batch_size,), device, torch.int64, low=0, high=n)
+    expected = hier_torch.hier_softmax_nll(tree, scores, labels)
+    actual = (
+        hier_torch.HierSoftmaxCrossEntropy(tree, with_leaf_targets=False).to(device=device)
+    )(scores, labels)
+    torch.testing.assert_close(actual, expected, check_device=True, atol=1e-4, rtol=1e-4)
 
 
 class TestSubtractChildren(unittest.TestCase):
@@ -72,40 +78,57 @@ class TestFlatSoftmaxNLL(unittest.TestCase):
         torch.testing.assert_allclose(actual, expected)
 
 
-class TestFlatBertinettoHXE(unittest.TestCase):
+@mark.parametrize('device', DEVICES)
+def test_FlatBertinettoHXE_equal_log_softmax_with_alpha_zero_random(device):
+    tree = _basic_tree()
+    batch_size = 16
+    leaf_labels = torch.testing.make_tensor(
+        (batch_size,), device, torch.int64, low=0, high=tree.num_leaf_nodes())
+    scores = torch.testing.make_tensor(
+        (batch_size, tree.num_leaf_nodes()), device, torch.float32)
 
-    def test_equal_log_softmax_with_alpha_zero_random(self):
-        tree = _basic_tree()
-        batch_size = 16
-        leaf_labels = torch.randint(0, tree.num_leaf_nodes(), (batch_size,))
-        scores = torch.randn((batch_size, tree.num_leaf_nodes()))
-        actual = hier_torch.FlatBertinettoHXE(
-            tree, alpha=0.0, with_leaf_targets=True, reduction='none',
-        )(scores, leaf_labels)
-        expected = F.cross_entropy(scores, leaf_labels, reduction='none')
-        torch.testing.assert_allclose(actual, expected)
+    actual = (
+        hier_torch.FlatBertinettoHXE(tree, alpha=0.0, with_leaf_targets=True, reduction='none')
+        .to(device=device)
+    )(scores, leaf_labels)
+    expected = F.cross_entropy(scores, leaf_labels, reduction='none').to(device=device)
+    torch.testing.assert_close(actual, expected, check_device=True, atol=1e-4, rtol=1e-4)
 
-    def test_less_log_softmax_with_alpha_positive_random(self):
-        tree = _basic_tree()
-        batch_size = 16
-        leaf_labels = torch.randint(0, tree.num_leaf_nodes(), (batch_size,))
-        scores = torch.randn((batch_size, tree.num_leaf_nodes()))
-        hxe_loss = hier_torch.FlatBertinettoHXE(
-            tree, alpha=0.1, with_leaf_targets=True, reduction='none',
-        )(scores, leaf_labels)
-        ce_loss = F.cross_entropy(scores, leaf_labels, reduction='none')
-        self.assertTrue(torch.all(hxe_loss <= ce_loss))
 
-    def test_equal_flat_softmax_nll_with_non_leaf_random(self):
-        tree = _basic_tree()
-        batch_size = 16
-        labels = torch.randint(0, tree.num_nodes(), (batch_size,))
-        scores = torch.randn((batch_size, tree.num_leaf_nodes()))
-        actual = hier_torch.FlatBertinettoHXE(
-            tree, alpha=0.0, with_leaf_targets=False, reduction='none')(scores, labels)
-        expected = hier_torch.FlatSoftmaxNLL(
-            tree, with_leaf_targets=False, reduction='none')(scores, labels)
-        torch.testing.assert_allclose(actual, expected)
+@mark.parametrize('device', DEVICES)
+def test_FlatBertinettoHXE_less_log_softmax_with_alpha_positive_random(device):
+    tree = _basic_tree()
+    batch_size = 16
+    leaf_labels = torch.testing.make_tensor(
+        (batch_size,), device, torch.int64, low=0, high=tree.num_leaf_nodes())
+    scores = torch.testing.make_tensor(
+        (batch_size, tree.num_leaf_nodes()), device, torch.float32)
+
+    hxe_loss = (
+        hier_torch.FlatBertinettoHXE(tree, alpha=0.1, with_leaf_targets=True, reduction='none')
+        .to(device=device)
+    )(scores, leaf_labels)
+    ce_loss = F.cross_entropy(scores, leaf_labels, reduction='none').to(device=device)
+    assert torch.all(hxe_loss <= ce_loss)
+
+
+@mark.parametrize('device', DEVICES)
+def test_FlatBertinettoHXE_equal_flat_softmax_nll_with_non_leaf_random(device):
+    tree = _basic_tree()
+    batch_size = 16
+    labels = torch.testing.make_tensor(
+        (batch_size,), device, torch.int64, low=0, high=tree.num_nodes())
+    scores = torch.testing.make_tensor(
+        (batch_size, tree.num_leaf_nodes()), device, torch.float32)
+    actual = (
+        hier_torch.FlatBertinettoHXE(tree, alpha=0.0, with_leaf_targets=False, reduction='none')
+        .to(device=device)
+    )(scores, labels)
+    expected = (
+        hier_torch.FlatSoftmaxNLL(tree, with_leaf_targets=False, reduction='none')
+        .to(device=device)
+    )(scores, labels)
+    torch.testing.assert_close(actual, expected, check_device=True, atol=1e-4, rtol=1e-4)
 
 
 class TestDescendantLogSoftmax(unittest.TestCase):

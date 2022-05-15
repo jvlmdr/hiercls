@@ -166,7 +166,7 @@ class FlatBertinettoHXE(nn.Module):
         # lse(parent) - lse(child)
         cond_nll = -torch.diff(lse_ancestor, dim=-1)
         cond_nll = torch.where(path_valid[:, 1:], cond_nll, torch.tensor(0.0, device=device))
-        weight = torch.exp(-self.alpha * torch.arange(self.max_depth))
+        weight = torch.exp(-self.alpha * torch.arange(self.max_depth, device=device))
         weighted_nll = cond_nll * weight
         loss = torch.sum(weighted_nll, dim=-1)
 
