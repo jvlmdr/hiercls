@@ -231,10 +231,20 @@ def pareto_integrate(a: np.ndarray, b: np.ndarray) -> float:
     return np.sum(da * b)
 
 
+def paretoize(a: np.ndarray, b: np.ndarray) -> float:
+    """Evaluates the pareto function at the query."""
+    assert np.ndim(a) == 1
+    assert np.ndim(b) == 1
+    assert len(a) == len(b)
+    order = np.argsort(a)
+    # TODO: Get unique elements?
+    return np.flip(np.maximum.accumulate(np.flip(b[order])))
+
+
 def pareto_intercept(a: np.ndarray, b: np.ndarray, query: np.ndarray) -> float:
     """Evaluates the pareto function at the query."""
-    assert np.all((0 <= a) & (a <= 1))
-    assert np.all((0 <= b) & (b <= 1))
+    # assert np.all((0 <= a) & (a <= 1))
+    # assert np.all((0 <= b) & (b <= 1))
     assert np.ndim(a) == 1
     assert np.ndim(b) == 1
     assert len(a) == len(b)
