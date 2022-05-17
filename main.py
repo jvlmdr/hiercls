@@ -32,7 +32,6 @@ import models.moit.preact_resnet
 import progmet
 import tree_util
 
-EVAL_BATCH_SIZE = 256
 SOURCE_DIR = pathlib.Path(__file__).parent
 TENSORBOARD_FLUSH_SECS = 10
 
@@ -52,6 +51,8 @@ flags.DEFINE_string(
     'Where to write tensorboard logs. '
     'Logs will be written under a dir for the experiment_id.')
 
+flags.DEFINE_integer(
+    'eval_batch_size', 64, 'Batch size during eval (higher can be faster but takes more memory).')
 flags.DEFINE_integer(
     'eval_freq', 1, 'Frequency with which to run eval (epochs).')
 flags.DEFINE_integer(
@@ -718,7 +719,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         prefetch_factor=FLAGS.loader_prefetch_factor)
     eval_loader = torch.utils.data.DataLoader(
         dataset=eval_dataset,
-        batch_size=EVAL_BATCH_SIZE,
+        batch_size=FLAGS.eval_batch_size,
         shuffle=False,
         pin_memory=False,  # FLAGS.loader_pin_memory,
         num_workers=FLAGS.loader_num_workers,
