@@ -1761,6 +1761,33 @@ class RandomCutLossWithAncestorSum(nn.Module):
         return self.random_cut_loss_fn(sum_scores, labels)
 
 
+class SoftmaxNLLWithAncestorSum(nn.Module):
+
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            with_leaf_targets: bool = True,
+            reduction: str = 'mean'):
+        super().__init__()
+        # Exclude root!
+        self.sum_ancestors = SumLeafAncestors(tree, exclude_root=True)
+        if not with_leaf_targets:
+            self.softmax_nll = FlatSoftmaxNLL(
+                tree, with_leaf_targets=with_leaf_targets, reduction=reduction)
+        else:
+            self.softmax_nll = nn.CrossEntropyLoss(reduction=reduction)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.sum_ancestors._apply(fn)
+        self.softmax_nll._apply(fn)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        sum_scores = self.sum_ancestors(scores, dim=-1)
+        return self.softmax_nll(sum_scores, labels)
+
+
 def make_loss_weights(strategy: str, tree: hier.Hierarchy, exclude_root: bool = False) -> Optional[np.ndarray]:
     if strategy == 'none' or not strategy:
         return None

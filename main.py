@@ -488,7 +488,7 @@ def get_num_outputs(predict: str, tree: hier.Hierarchy) -> int:
         num_outputs = tree.num_nodes() - 1
     elif predict in ('share_multilabel', 'share_multilabel_focal'):
         num_outputs = tree.num_nodes()
-    elif predict == 'share_random_cut':
+    elif predict in ('share_random_cut', 'share_flat_softmax'):
         num_outputs = tree.num_nodes() - 1
     elif predict == 'levelwise_softmax':
         num_outputs = sum(map(len, hier.level_nodes(tree, extend=True)))
@@ -630,12 +630,21 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             hier_torch.SumAncestors(tree, exclude_root=False).to(device))
 
     elif config.predict == 'share_random_cut':
-        # All likelihoods depend on the root and loss is invariant to it.
         if config.train.label_smoothing:
             raise NotImplementedError
         loss_fn = hier_torch.RandomCutLossWithAncestorSum(
             tree, config.train.random_cut_prob, permit_root_cut=False,
             with_leaf_targets=config.train_with_leaf_targets).to(device)
+        pred_fn = partial(
+            lambda sum_ancestor_fn, theta: torch.exp(hier_torch.multilabel_log_likelihood(
+                sum_ancestor_fn(theta), replace_root=True)),
+            hier_torch.SumAncestors(tree, exclude_root=True).to(device))
+
+    elif config.predict == 'share_flat_softmax':
+        if config.train.label_smoothing:
+            raise NotImplementedError
+        loss_fn = hier_torch.SoftmaxNLLWithAncestorSum(
+            tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
             lambda sum_ancestor_fn, theta: torch.exp(hier_torch.multilabel_log_likelihood(
                 sum_ancestor_fn(theta), replace_root=True)),

@@ -98,7 +98,7 @@ def test_FlatBertinettoHXE_equal_log_softmax_with_alpha_zero_random(device, tol)
     torch.testing.assert_close(actual, expected, check_device=True, atol=tol, rtol=tol)
 
 
-@mark.parametrize('device,tol', [('cpu', 0), ('cuda', 1e-4)])
+@mark.parametrize('device,tol', [('cpu', 1e-8), ('cuda', 1e-4)])
 def test_FlatBertinettoHXE_less_log_softmax_with_alpha_positive_random(device, tol):
     tree = _basic_tree()
     batch_size = 16
@@ -202,3 +202,24 @@ def test_TestDescendantSoftmaxCousinLoss_random(device, tol):
         .to(device=device)
     )(scores, labels)
     torch.testing.assert_close(actual, expected, check_device=True, atol=tol, rtol=tol)
+
+
+@mark.parametrize('device', ['cpu', 'cuda'])
+def test_RandomCut_zero_prob(device):
+    tree = _basic_tree()
+    actual = (
+        hier_torch.RandomCut(tree, cut_prob=0.0, permit_root_cut=False).to(device)
+    )(batch_shape=())
+    expected = torch.from_numpy(tree.leaf_mask()).to(device=device)
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
+@mark.parametrize('device', ['cpu', 'cuda'])
+def test_RandomCut_random(device):
+    tree = _basic_tree()
+    batch_size = 32
+    cut = (
+        hier_torch.RandomCut(tree, cut_prob=0.1, permit_root_cut=False).to(device)
+    )(batch_shape=(batch_size,))
+    assert torch.all(torch.sum(cut, axis=-1) <= tree.num_leaf_nodes()).item()
+    assert torch.all(~cut[:, 0]).item()
