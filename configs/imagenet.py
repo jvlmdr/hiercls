@@ -34,5 +34,7 @@ def get_config():
             'focal_alpha': 0.25,
             'focal_gamma': 2.0,
             'hier_focal_power': 0.0,
+            'random_cut_prob': 0.1,
+            'loss_weighting': 'none',
         }),
     })

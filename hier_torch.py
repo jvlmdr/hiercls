@@ -861,8 +861,9 @@ def levelwise_softmax_nll(
 
 class LevelwiseSoftmaxNLL(nn.Module):
 
-    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False):
+    def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = False, reduction: str = 'mean'):
         super().__init__()
+        assert reduction == 'mean'
         level_nodes = hier.level_nodes(tree, extend=True)
         level_sizes = tuple(map(len, level_nodes))
         num_levels = len(level_nodes)
@@ -1789,6 +1790,37 @@ class SoftmaxNLLWithAncestorSum(nn.Module):
     def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         sum_scores = self.sum_ancestors(scores, dim=-1)
         return self.softmax_nll(sum_scores, labels)
+
+
+class LevelwiseWithAncestorSum(nn.Module):
+
+    def __init__(
+            self,
+            tree: hier.Hierarchy,
+            with_leaf_targets: bool = True,
+            reduction: str = 'mean'):
+        super().__init__()
+        if not with_leaf_targets:
+            raise NotImplementedError
+        # Exclude root!
+        self.sum_ancestors = SumAncestors(tree, exclude_root=True)
+        level_nodes = hier.level_nodes(tree, extend=True)
+        self.level_nodes = tuple(map(torch.from_numpy, level_nodes))
+        self.levelwise_loss = LevelwiseSoftmaxNLL(
+            tree, with_leaf_targets=with_leaf_targets, reduction=reduction)
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.sum_ancestors._apply(fn)
+        self.level_nodes = tuple(map(fn, self.level_nodes))
+        self.levelwise_loss._apply(fn)
+        return self
+
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        sum_scores = self.sum_ancestors(scores, dim=-1)
+        level_scores = [sum_scores[..., subset] for subset in self.level_nodes]
+        flat_level_scores = torch.concat(level_scores, dim=-1)
+        return self.levelwise_loss(flat_level_scores, labels)
 
 
 def make_loss_weights(strategy: str, tree: hier.Hierarchy, exclude_root: bool = False) -> Optional[np.ndarray]:
