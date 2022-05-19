@@ -677,10 +677,13 @@ def multilabel_log_likelihood(
         scores: torch.Tensor,
         dim: int = -1,
         insert_root: bool = False,
-        replace_root: bool = False) -> torch.Tensor:
+        replace_root: bool = False,
+        temperature: Optional[float] = None) -> torch.Tensor:
     assert not (insert_root and replace_root)
     assert dim in (-1, scores.ndim - 1)
     device = scores.device
+    if temperature:
+        scores = scores / temperature
     logp = F.logsigmoid(scores)
     if insert_root:
         zero = torch.zeros((*scores.shape[:-1], 1), device=device)

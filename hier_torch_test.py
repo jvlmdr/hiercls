@@ -214,10 +214,29 @@ def test_RandomCut_zero_prob(device):
     torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
 
+@mark.parametrize('device,tol', [('cpu', None), ('cuda', 1e-4)])
+def test_RandomCutLossWithAncestorSum_zero_prob(device, tol):
+    tree = _basic_tree()
+    batch_size = 16
+    n = tree.num_nodes()
+    scores = torch.testing.make_tensor((batch_size, n - 1), device, torch.float32)
+    labels = torch.testing.make_tensor(
+        (batch_size,), device, torch.int64, low=0, high=tree.num_leaf_nodes())
+    actual = (
+        hier_torch.RandomCutLossWithAncestorSum(
+            tree, cut_prob=0.0, permit_root_cut=False, with_leaf_targets=True)
+        .to(device)
+    )(scores, labels)
+    expected = (
+        hier_torch.SoftmaxNLLWithAncestorSum(tree, with_leaf_targets=True).to(device)
+    )(scores, labels)
+    torch.testing.assert_close(actual, expected, atol=tol, rtol=tol)
+
+
 @mark.parametrize('device', ['cpu', 'cuda'])
 def test_RandomCut_random(device):
     tree = _basic_tree()
-    batch_size = 32
+    batch_size = 16
     cut = (
         hier_torch.RandomCut(tree, cut_prob=0.1, permit_root_cut=False).to(device)
     )(batch_shape=(batch_size,))

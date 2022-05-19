@@ -637,7 +637,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
             lambda sum_ancestor_fn, theta: torch.exp(hier_torch.multilabel_log_likelihood(
-                sum_ancestor_fn(theta), replace_root=True)),
+                sum_ancestor_fn(theta), replace_root=True, temperature=10.0)),
             hier_torch.SumAncestors(tree, exclude_root=True).to(device))
 
     elif config.predict == 'share_flat_softmax':
@@ -646,9 +646,10 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
         loss_fn = hier_torch.SoftmaxNLLWithAncestorSum(
             tree, with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
-            lambda sum_ancestor_fn, theta: torch.exp(hier_torch.multilabel_log_likelihood(
-                sum_ancestor_fn(theta), replace_root=True)),
-            hier_torch.SumAncestors(tree, exclude_root=True).to(device))
+            lambda sum_descendant_fn, sum_ancestor_fn, theta: sum_descendant_fn(
+                F.softmax(sum_ancestor_fn(theta, dim=-1), dim=-1), dim=-1),
+            hier_torch.SumLeafDescendants(tree, strict=False).to(device),
+            hier_torch.SumLeafAncestors(tree, exclude_root=True).to(device))
 
     elif config.predict == 'random_cut':
         if config.train.label_smoothing:
@@ -658,7 +659,7 @@ def make_loss(config: ml_collections.ConfigDict, tree: hier.Hierarchy, device: t
             with_leaf_targets=config.train_with_leaf_targets).to(device)
         pred_fn = partial(
             lambda sum_ancestor_fn, theta: torch.exp(hier_torch.multilabel_log_likelihood(
-                sum_ancestor_fn(theta), replace_root=True)),
+                sum_ancestor_fn(theta), replace_root=True, temperature=10.0)),
             hier_torch.SumAncestors(tree, exclude_root=True).to(device))
 
     elif config.predict == 'levelwise_softmax':
