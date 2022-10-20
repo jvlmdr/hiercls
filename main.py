@@ -59,6 +59,8 @@ flags.DEFINE_integer(
     'save_freq', 10, 'Frequency with which to save model and results (epochs).')
 flags.DEFINE_integer(
     'loader_num_workers', 8, 'Number of data loaders (affects memory footprint).')
+flags.DEFINE_bool(
+    'loader_persistent_workers', False, 'Make workers persistent.')
 flags.DEFINE_integer(
     'loader_prefetch_factor', 2, 'Number of samples prefetched by each worker.')
 flags.DEFINE_bool(
@@ -736,6 +738,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         shuffle=True,
         pin_memory=FLAGS.loader_pin_memory,
         num_workers=FLAGS.loader_num_workers,
+        persistent_workers=FLAGS.loader_persistent_workers,
         prefetch_factor=FLAGS.loader_prefetch_factor)
     eval_loader = torch.utils.data.DataLoader(
         dataset=eval_dataset,
@@ -743,6 +746,7 @@ def train(config, experiment_dir: Optional[pathlib.Path]):
         shuffle=False,
         pin_memory=False,  # FLAGS.loader_pin_memory,
         num_workers=FLAGS.loader_num_workers,
+        persistent_workers=FLAGS.loader_persistent_workers,
         prefetch_factor=FLAGS.loader_prefetch_factor)
 
     input_shape = tuple(train_dataset[0][0].shape)
