@@ -17,6 +17,7 @@ def flat_log_softmax(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         dim: int = -1) -> torch.Tensor:
+    """Returns log of flat-softmax likelihood for all nodes."""
     assert dim in (-1, scores.ndim - 1)
     logp_leaf = F.log_softmax(scores, dim=-1)
     # The value is_ancestor[i, j] is true if node i is an ancestor of node j.
@@ -34,6 +35,7 @@ def flat_log_softmax(
 
 
 class FlatLogSoftmax(nn.Module):
+    """Implements flat_log_softmax as an object. Avoids re-computation."""
 
     def __init__(self, tree):
         super().__init__()
@@ -101,7 +103,10 @@ def flat_bertinetto_hxe(
         labels: torch.Tensor,
         alpha: float = 0.0,
         dim: int = -1) -> torch.Tensor:
-    """The target is an index of a node in the tree."""
+    """Returns the HXE loss from "Making Better Mistakes".
+
+    The target is an index of a node in the tree.
+    """
     device = scores.device
     # Take log-sum-exp of leaf descendants.
     parent = torch.from_numpy(tree.parents(root_loop=True)).to(device)
@@ -125,6 +130,7 @@ def flat_bertinetto_hxe(
 
 
 class FlatBertinettoHXE(nn.Module):
+    """Implements flat_bertinetto_hxe as an object. Avoids re-computation."""
 
     def __init__(self, tree: hier.Hierarchy, alpha: float, with_leaf_targets: bool, reduction: str = 'mean'):
         super().__init__()
@@ -180,6 +186,10 @@ def hier_softmax_nll(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         labels: torch.Tensor) -> torch.Tensor:
+    """Returns cross-entropy loss for YOLO-style conditional softmax.
+
+    Labels are node indices.
+    """
     log_prob = hier_log_softmax(tree, scores, dim=-1)
     assert labels.ndim == scores.ndim - 1
     nll = -torch.gather(log_prob, -1, labels.unsqueeze(-1)).squeeze(-1)
@@ -190,6 +200,10 @@ def hier_softmax_nll_with_leaf(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         labels: torch.Tensor) -> torch.Tensor:
+    """Returns cross-entropy loss for YOLO-style conditional softmax.
+
+    Labels are leaf indices.
+    """
     device = scores.device
     leaf_subset = torch.from_numpy(tree.leaf_subset()).to(device)
     # TODO: Could make this faster by only computing likelihood for targets.
@@ -201,7 +215,7 @@ def hier_softmax_nll_with_leaf(
 
 
 class HierSoftmaxNLL(nn.Module):
-    """Avoids recomputation in hier_softmax_nll."""
+    """Implements hier_softmax_nll as an object. Avoids re-computation."""
 
     def __init__(
             self,
@@ -230,7 +244,10 @@ class HierSoftmaxNLL(nn.Module):
 
 
 class HierSoftmaxCrossEntropy(nn.Module):
-    """Supports integer label targets or distribution targets."""
+    """Implements cross-entropy for YOLO-style conditional softmax. Avoids re-computation.
+
+    Supports integer label targets or distribution targets.
+    """
 
     def __init__(
             self,
@@ -282,6 +299,7 @@ def hier_cond_log_softmax(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         dim: int = -1) -> torch.Tensor:
+    """Returns log-likelihood of each node given its parent."""
     # Split scores into softmax for each internal node over its children.
     # Convert from [s[0], s[1], ..., s[n-1]]
     # to [[s[0], ..., s[k-1], -inf, -inf, ...],
@@ -327,6 +345,7 @@ def hier_log_softmax(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         dim: int = -1) -> torch.Tensor:
+    """Returns log-likelihood for conditional softmax."""
     # Finally, take sum over ancestor conditionals to obtain likelihoods.
     assert dim in (-1, scores.ndim - 1)
     log_cond_p = hier_cond_log_softmax(tree, scores, dim=dim)
@@ -337,7 +356,7 @@ def hier_log_softmax(
 
 
 class HierCondLogSoftmax(nn.Module):
-    """Returns log-likelihood of each node given its parent."""
+    """Implements hier_cond_log_softmax as an object. Avoids re-computation."""
 
     def __init__(self, tree: hier.Hierarchy):
         super().__init__()
@@ -386,7 +405,7 @@ class HierCondLogSoftmax(nn.Module):
 
 
 class HierLogSoftmax(nn.Module):
-    """Avoids re-computation in hier_log_softmax()."""
+    """Implements hier_log_softmax as an object. Avoids re-computation."""
 
     def __init__(self, tree: hier.Hierarchy):
         super().__init__()
@@ -523,7 +542,7 @@ def sum_leaf_ancestors(
 
 
 class Sum(nn.Module):
-    """Avoids re-computation in sum_xxx()."""
+    """Implements sum_xxx as an object. Avoids re-computation."""
 
     def __init__(
             self,
@@ -1039,40 +1058,6 @@ def descendant_logsumexp(tree: hier.Hierarchy, x: torch.Tensor) -> torch.Tensor:
     return out
 
 
-class DescendantLogSumExp(nn.Module):
-    """Finds the logsumexp over all descendants of each node."""
-
-    # TODO: This is the same as MaxCutLogSumExp with max_reduction='logsumexp'.
-
-    def __init__(self, tree: hier.Hierarchy):
-        super().__init__()
-        level_parents, level_children = hier.level_successors_padded(tree, 'constant', -1)
-        self.level_parents = list(map(torch.from_numpy, level_parents))
-        self.level_children = list(map(torch.from_numpy, level_children))
-
-    def _apply(self, fn):
-        super()._apply(fn)
-        self.level_parents = list(map(fn, self.level_parents))
-        self.level_children = list(map(fn, self.level_children))
-        return self
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        num_levels = len(self.level_parents)
-        neg_inf = torch.tensor(-torch.inf, dtype=torch.float32, device=x.device)
-        out = x
-        # Work up from the maximum depth, taking max of node and its children.
-        for i in reversed(range(num_levels)):
-            valid = self.level_children[i] >= 0
-            # child_values = out[..., self.level_children[i]]
-            # max_child_value = torch.logsumexp(child_values, dim=-1)
-            child_values = out[..., torch.where(valid, self.level_children[i], 0)]
-            max_child_value = torch.logsumexp(torch.where(valid, child_values, neg_inf), dim=-1)
-            out = out.index_copy(
-                -1, self.level_parents[i],
-                _logsumexp2(out[..., self.level_parents[i]], max_child_value))
-        return out
-
-
 def _index_select(x: torch.Tensor, dim: int, index: torch.Tensor) -> torch.Tensor:
     """Like Tensor.index_select, but supports multi-dimensional index.
 
@@ -1122,12 +1107,16 @@ def _gather_2d(
     return x.reshape(x, flat_shape).gather(-1, i * n + j)
 
 
-def max_cut_logsumexp(
+def tree_reduce_logsumexp(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
-        max_reduction: str = 'max') -> torch.Tensor:
-    """Finds f(node) = max(theta[node], logsumexp(f(children))."""
-    max_reduce_fn = get_reduce_fn(max_reduction)
+        node_reduction: str) -> torch.Tensor:
+    """Finds f(node) = reduce_fn(theta[node], logsumexp(f(children)).
+
+    The max function can be exchanged for any from get_reduce_fn().
+    In particular, using 'logsumexp' computes logsumexp of all descendants.
+    """
+    max_reduce_fn = get_reduce_fn(node_reduction)
     parents, children = hier.level_successors(tree)
     num_levels = len(parents)
     num_parents = [len(parents[d]) for d in range(num_levels)]
@@ -1172,10 +1161,11 @@ def get_reduce_fn(reduction: str) -> Callable[[torch.Tensor, torch.Tensor], torc
     else:
         raise ValueError('unknown max reduction', reduction)
 
+        
+class TreeReduceLogSumExp(nn.Module):
+    """Implements tree_reduce_logsumexp as an object. Avoids re-computation."""
 
-class MaxCutLogSumExp(nn.Module):
-
-    def __init__(self, tree: hier.Hierarchy, max_reduction='max'):
+    def __init__(self, tree: hier.Hierarchy, node_reduction: str):
         super().__init__()
         parents, children = hier.level_successors(tree)
         num_levels = len(parents)
@@ -1194,7 +1184,7 @@ class MaxCutLogSumExp(nn.Module):
         self.parents = list(map(torch.from_numpy, parents))
         self.flat_inputs_index = list(map(torch.from_numpy, flat_inputs_index))
         self.concat_children = list(map(torch.from_numpy, concat_children))
-        self.max_reduce_fn = get_reduce_fn(max_reduction)
+        self.max_reduce_fn = get_reduce_fn(node_reduction)
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -1221,20 +1211,25 @@ class MaxCutLogSumExp(nn.Module):
         return out
 
 
-def max_cut_log_softmax(
+MaxCutLogSumExp = partial(TreeReduceLogSumExp, node_reduction='max')
+DescendantLogSumExp = partial(TreeReduceLogSumExp, node_reduction='logsumexp')
+
+
+def tree_reduce_log_softmax(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
-        max_reduction: str = 'max') -> torch.Tensor:
+        node_reduction: str) -> torch.Tensor:
     """Finds the max over all descendants of each node."""
-    log_z = max_cut_logsumexp(tree, scores, max_reduction=max_reduction)
+    log_z = tree_reduce_logsumexp(tree, scores, node_reduction=node_reduction)
     return log_z - log_z[..., [0]]
 
 
-class DescendantLogSoftmax(nn.Module):
+class TreeReduceLogSoftmax(nn.Module):
+    """Implements tree_reduce_log_softmax as an object. Avoids re-computation."""
 
-    def __init__(self, tree: hier.Hierarchy, max_reduction: str = 'logsumexp'):
+    def __init__(self, tree: hier.Hierarchy, node_reduction: str):
         super().__init__()
-        self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
+        self.max_cut_logsumexp = TreeReduceLogSumExp(tree, node_reduction=node_reduction)
 
     def _apply(self, fn):
         super()._apply(fn)
@@ -1246,12 +1241,24 @@ class DescendantLogSoftmax(nn.Module):
         return log_z - log_z[..., [0]]
 
 
-def max_cut_softmax_loss(
+max_cut_log_softmax = partial(tree_reduce_log_softmax, node_reduction='max')
+descendant_log_softmax = partial(tree_reduce_log_softmax, node_reduction='logsumexp')
+MaxCutLogSoftmax = partial(TreeReduceLogSoftmax, node_reduction='max')
+DescendantLogSoftmax = partial(TreeReduceLogSoftmax, node_reduction='logsumexp')
+
+
+def tree_reduce_softmax_loss(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         labels: torch.Tensor,
         with_leaf_targets: bool,
-        max_reduction: str = 'max') -> torch.Tensor:
+        node_reduction: str) -> torch.Tensor:
+    """Compares max-cut below each node to max-cut below root.
+
+    Obtains score for each node as max of (node, logsumexp(child scores)).
+    (Can replace max with logsumexp.)
+    Loss is difference between scores for root and each ancestor node.
+    """
     label_paths = tree.paths_padded()
     label_depths = tree.depths()
     if with_leaf_targets:
@@ -1263,7 +1270,7 @@ def max_cut_softmax_loss(
     label_depths = torch.from_numpy(label_depths).to(scores.device)
 
     # Get energy for each node.
-    log_energy = max_cut_logsumexp(tree, scores, max_reduction=max_reduction)
+    log_energy = tree_reduce_logsumexp(tree, scores, node_reduction=node_reduction)
     # Get log partition function (root energy).
     log_z = log_energy[..., 0]
     depth = label_depths[labels]
@@ -1279,13 +1286,17 @@ def max_cut_softmax_loss(
     return torch.mean(loss)
 
 
-class DescendantSoftmaxLoss(nn.Module):
+class TreeReduceSoftmaxLoss(nn.Module):
+    """Implements max_cut_softmax_loss as an object. Avoids re-computation.
+
+    Admits per-node weights to account for coarse nodes being more frequent.
+    """
 
     def __init__(
             self,
             tree: hier.Hierarchy,
             with_leaf_targets: bool,
-            max_reduction: str = 'logsumexp',
+            node_reduction: str = 'logsumexp',
             node_weight: Optional[torch.Tensor] = None,
             focal_power: Optional[float] = None,
             reduction: str = 'mean'):
@@ -1299,7 +1310,7 @@ class DescendantSoftmaxLoss(nn.Module):
             label_depths = label_depths[label_order]
         self.label_paths = torch.from_numpy(label_paths)
         self.label_depths = torch.from_numpy(label_depths)
-        self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
+        self.max_cut_logsumexp = MaxCutLogSumExp(tree, node_reduction=node_reduction)
         self.node_weight = node_weight
         self.focal_power = focal_power
         self.reduction = reduction
@@ -1335,12 +1346,18 @@ class DescendantSoftmaxLoss(nn.Module):
             return loss
 
 
-def max_cut_softmax_complement_loss(
+max_cut_softmax_loss = partial(tree_reduce_softmax_loss, node_reduction='max')
+descendant_softmax_loss = partial(tree_reduce_softmax_loss, node_reduction='logsumexp')
+MaxCutSoftmaxLoss = partial(TreeReduceSoftmaxLoss, node_reduction='max')
+DescendantSoftmaxLoss = partial(TreeReduceSoftmaxLoss, node_reduction='logsumexp')
+
+
+def descendant_softmax_cousin_loss(
         tree: hier.Hierarchy,
         scores: torch.Tensor,
         labels: torch.Tensor,
-        with_leaf_targets: bool,
-        max_reduction: str = 'max') -> torch.Tensor:
+        with_leaf_targets: bool) -> torch.Tensor:
+    """Like max_cut_softmax_loss, except it excludes ancestors."""
     device = scores.device
 
     node_siblings = hier.siblings_padded(tree, method='constant', constant_value=-1)
@@ -1363,7 +1380,7 @@ def max_cut_softmax_complement_loss(
     siblings = torch.where(sibling_mask, siblings, 0)
 
     # Get energy of all nodes.
-    log_energy = max_cut_logsumexp(tree, scores, max_reduction=max_reduction)
+    log_energy = descendant_logsumexp(tree, scores)
     *batch_dims, m, n = siblings.shape
     sibling_energy = log_energy.gather(-1, siblings.reshape(*batch_dims, -1)).reshape(*batch_dims, m, n)
     ancestor_logsumexp = torch.logsumexp(
@@ -1380,12 +1397,15 @@ def max_cut_softmax_complement_loss(
 
 
 class DescendantSoftmaxCousinLoss(nn.Module):
+    """Implements descendant_softmax_cousin_loss as an object. Avoids re-computation.
+
+    This loss is described as "soft-max-descendant" in the paper.
+    """
 
     def __init__(
             self,
             tree: hier.Hierarchy,
             with_leaf_targets: bool,
-            max_reduction: str = 'logsumexp',
             node_weight: Optional[torch.Tensor] = None,
             reduction: str = 'mean'):
         super().__init__()
@@ -1398,7 +1418,7 @@ class DescendantSoftmaxCousinLoss(nn.Module):
 
         self.node_siblings = torch.from_numpy(node_siblings)
         self.label_paths = torch.from_numpy(label_paths)
-        self.max_cut_logsumexp = MaxCutLogSumExp(tree, max_reduction=max_reduction)
+        self.max_cut_logsumexp = DescendantLogSumExp(tree)
         self.node_weight = node_weight
         self.reduction = reduction
 
@@ -1459,7 +1479,8 @@ def ragged_to_sparse_index(row_lens: List[int]) -> Tuple[np.ndarray, np.ndarray]
     return concat_row, concat_col
 
 
-class SoftMarginLoss(nn.Module):
+class MarginLoss(nn.Module):
+    """Computes soft or hard margin loss for given a margin function."""
 
     def __init__(
             self, tree: hier.Hierarchy,
@@ -1554,7 +1575,7 @@ class SubtractChildren(nn.Module):
 
 
 class ConditionalMultiLabelLogSigmoid(nn.Module):
-    """Brust and Denzler"""
+    """Log-likelhoods for Brust and Denzler."""
 
     def __init__(self, tree: hier.Hierarchy):
         super().__init__()
@@ -1573,12 +1594,12 @@ class ConditionalMultiLabelLogSigmoid(nn.Module):
 
 
 class ConditionalMultiLabelLoss(nn.Module):
-    """Brust and Denzler
+    """Loss for Brust and Denzler (specialised to tree rather than DAG).
 
     Positive examples are ancestors.
     Negative examples are other children of ancestors.
 
-    Assume that labels are leaf nodes for now.
+    Assumes that labels are leaf nodes.
     """
 
     def __init__(self, tree: hier.Hierarchy, with_leaf_targets: bool = True):
@@ -1658,6 +1679,13 @@ class MultiLabelLossWithAncestorSum(nn.Module):
 
 
 class RandomCut(nn.Module):
+    """Samples a random cut of the tree.
+
+    Starts from the root and samples from Bernoulli for each node.
+    If a node's sample is 0, the tree is terminated at that node.
+
+    Returns a binary mask for the leaf nodes of the cut.
+    """
 
     def __init__(self, tree: hier.Hierarchy, cut_prob: float, permit_root_cut: bool = False):
         super().__init__()
@@ -1694,6 +1722,10 @@ class RandomCut(nn.Module):
 
 
 class RandomCutLoss(nn.Module):
+    """Cross-entropy loss using the leaf nodes of a random cut.
+    
+    As described in "Deep RTC" (Wu et al., 2020).
+    """
 
     def __init__(
             self,
